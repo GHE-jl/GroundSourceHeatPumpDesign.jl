@@ -62,6 +62,30 @@ function Q_COP(Qb::AbstractVector{<:Real}, COP_heating::AbstractVector{<:Real},
     return Qg
 end
 
+"""
+    ground_load_from_heat_pump(Q_building, Tsrc, Tload, perf_heating, perf_cooling)
+
+Convert a building thermal load to the corresponding ground load, accounting for the heat pump's
+capacity limit at the current source/load entering fluid temperatures (EFTs).
+
+The heat pump's CAP and COP are looked up from `perf_heating` (if `Q_building > 0`, heating) or
+`perf_cooling` (if `Q_building < 0`, cooling) via [`heat_pump_performance`](@ref) — each is a tuple
+of arguments forwarded to that function (either `(Tsrc_grid, CAP_vec, COP_vec)` for the 1D overload
+or `(Tsrc_grid, Tload_grid, CAP_table, COP_table)` for the 2D overload). The heat pump's
+contribution is capped at its capacity; any load beyond that is reported as unmet rather than
+extrapolated.
+
+# Arguments
+    - `Q_building`: Building thermal load, `> 0` for heating, `< 0` for cooling [W, or kW]
+    - `Tsrc`: Source entering fluid temperature (EFT) [°C]
+    - `Tload`: Load entering fluid temperature (EFT) [°C]
+    - `perf_heating`: Heat pump heating performance data, forwarded to [`heat_pump_performance`](@ref)
+    - `perf_cooling`: Heat pump cooling performance data, forwarded to [`heat_pump_performance`](@ref)
+
+# Output
+    - `Q_ground`: Ground load using the same sign convention as [`Q_COP`](@ref) [W, or kW]
+    - `Q_unmet`: Building load left unmet because it exceeds the heat pump's capacity [W, or kW]
+"""
 function ground_load_from_heat_pump(Q_building, Tsrc, Tload, perf_heating, perf_cooling)
     if Q_building > 0
         CAP, COP = heat_pump_performance(Tsrc, Tload, perf_heating...)

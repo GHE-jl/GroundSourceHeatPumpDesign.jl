@@ -1,9 +1,7 @@
 module GroundSourceHeatPumpDesign
 
-using Revise
-
-includet("heat_pump.jl")
-includet("thermal_loads.jl")
+include("heat_pump.jl")
+include("thermal_loads.jl")
 
 # Functions from heat_pump.jl
 export heat_pump_performance

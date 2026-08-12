@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl/actions/workflows/CI.yml?query=branch%3Amain)
 [![Documentation](https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl/actions/workflows/Documenter.yml/badge.svg?branch=main)](https://GHE-jl.github.io/GroundSourceHeatPumpDesign.jl)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPLv3-blue.svg)](LICENSE)
 
 Heat pump modelling for ground-source heat pump (GSHP) systems, part of the
 [GHE.jl](https://GHE-jl.github.io/GHE.jl-docs) ecosystem. It is a standalone sibling of
@@ -36,4 +36,4 @@ Pkg.add(url = "https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl")
 
 ## License
 
-GPL-3.0, see [LICENSE](LICENSE).
+AGPL-3.0, see [LICENSE](LICENSE).

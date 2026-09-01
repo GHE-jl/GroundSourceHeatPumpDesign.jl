@@ -1,0 +1,12 @@
+[deps]
+CairoMakie = "13f3f980-e62b-5c42-98c6-ff1f3baf88f0"
+GroundHeatExchanger = "bd8f68b8-2a15-4d14-8bb6-4cefce65f0ac"
+GroundSourceHeatPumpDesign = "3428a2ea-22fa-4f1e-8362-907b59e8fde8"
+
+[sources]
+GroundSourceHeatPumpDesign = {path = ".."}
+
+[compat]
+CairoMakie = "0.15"
+GroundHeatExchanger = "1"
+julia = "1.11"

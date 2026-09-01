@@ -1,7 +1,8 @@
 #TODO Add the degradation coefficient to the heat pump performance function and use it in the sizing methods.
+
 """
     heat_pump_performance(Tsrc, Tsrc_grid, CAP_vec, COP_vec)
-    hp_performance(Tsrc, Tload, Tsrc_grid, Tload_grid, CAP_table, COP_table)
+    heat_pump_performance(Tsrc, Tload, Tsrc_grid, Tload_grid, CAP_table, COP_table)
 
 Function that calculates heat pump capacity (CAP) and coefficient of performance (COP) based on the
 source and load entering temperatures. The function has two overloads:
@@ -10,7 +11,6 @@ source and load entering temperatures. The function has two overloads:
     function of the source EFT.
 - 2D overload: bilinear interpolation on source and load entering temperatures. In this case, the
     provided CAP and COP values are a function of both source and load EFTs.
-
 For both overloads, values are clamped outside the provided grid bounds.
 # Arguments
     - `Tsrc`: Source entering fluid temperature (EFT, or EWT) (Tout of the ground loop) [°C]
@@ -18,9 +18,9 @@ For both overloads, values are clamped outside the provided grid bounds.
     - `Tsrc_grid`: Grid of source EFT values corresponding to the provided CAP and COP values [°C]
     - `Tload_grid`: Grid of load EFT values corresponding to the provided CAP and COP values [°C]
     - `CAP_vec`: Vector of heat pump CAPs corresponding to the source EFT grid (1D) [W]
-    - `COP_vec`: Vector of heat pump COPs corresponding to the source EFT grid (1D)
+    - `COP_vec`: Vector of heat pump COPs corresponding to the source EFT grid (1D) [W]
     - `CAP_table`: Matrix of heat pump CAPs corresponding to the source and load EFT grids (2D) [W]
-    - `COP_table`: Matrix of heat pump COPs corresponding to the source and load EFT grids (2D)
+    - `COP_table`: Matrix of heat pump COPs corresponding to the source and load EFT grids (2D) [W]
 # Output
     - Heat pump CAP and coefficient of performance (COP) corresponding to the provided
         source and load EFTs.
@@ -52,7 +52,18 @@ function heat_pump_performance(Tsrc::Real, Tsrc_grid::AbstractVector{<:Real},
 
     return CAP, COP
 end
+function heat_pump_performance(Tsrc::AbstractVector{<:Real}, Tsrc_grid::AbstractVector{<:Real},
+    CAP_vec::AbstractVector{<:Real}, COP_vec::AbstractVector{<:Real})
 
+    CAP = similar(Tsrc)
+    COP = similar(Tsrc)
+
+    for k in eachindex(Tsrc)
+        CAP[k], COP[k] = heat_pump_performance(Tsrc[k], Tsrc_grid, CAP_vec, COP_vec)
+    end
+
+    return CAP, COP
+end
 function heat_pump_performance(Tsrc::Real, Tload::Real, Tsrc_grid::AbstractVector{<:Real},
     Tload_grid::AbstractVector{<:Real}, CAP_table::AbstractMatrix{<:Real},
     COP_table::AbstractMatrix{<:Real})
@@ -100,7 +111,6 @@ function heat_pump_performance(Tsrc::Real, Tload::Real, Tsrc_grid::AbstractVecto
 
     return CAP, COP
 end
-
 function heat_pump_performance(Tsrc::AbstractVector{<:Real}, Tload::AbstractVector{<:Real},
     Tsrc_grid::AbstractVector{<:Real}, Tload_grid::AbstractVector{<:Real},
     CAP_table::AbstractMatrix{<:Real}, COP_table::AbstractMatrix{<:Real})
@@ -116,15 +126,44 @@ function heat_pump_performance(Tsrc::AbstractVector{<:Real}, Tload::AbstractVect
     return CAP, COP
 end
 
-function heat_pump_performance(Tsrc::AbstractVector{<:Real}, Tsrc_grid::AbstractVector{<:Real},
-    CAP_vec::AbstractVector{<:Real}, COP_vec::AbstractVector{<:Real})
+"""
+    n_active_heat_pumps(Qb_capped, Tsrc, n_HP, perf_heating, perf_cooling)
 
-    CAP = similar(Tsrc)
-    COP = similar(Tsrc)
+Number of heat pumps operating at each time step to deliver `Qb_capped`, given the source EFT
+`Tsrc` (e.g. from a ground temperature simulation) and a single unit's performance curve. Following
+Pasquier et al. (2013), this is a fractional, time-averaged count (between `0` and `n_HP`) rather
+than an integer, since a heat pump typically cycles within a time step instead of switching exactly
+on its boundary.
+# Arguments
+    - `Qb_capped`: Building load actually delivered by the heat pumps (post-capacity-capping, e.g.
+        from [`ground_load_capped`](@ref)) [W]
+    - `Tsrc`: Source entering fluid temperature (EFT) [°C]
+    - `n_HP`: Number of installed heat pumps
+    - `perf_heating`: Single heat pump's heating performance data, forwarded to
+        [`heat_pump_performance`](@ref) (`(Tsrc_grid, CAP_vec, COP_vec)`)
+    - `perf_cooling`: Single heat pump's cooling performance data, forwarded to
+        [`heat_pump_performance`](@ref)
+# Output
+    - `n`: Fractional number of heat pumps operating, in `[0, n_HP]`
+    - `COP`: Coefficient of performance at each time step, from the same interpolation as `n`
+# Reference
+    - Pasquier, P., Marcotte, D., Bernier, M., & Kummert, M. (2013). Simulation of ground-coupled
+        heat pump systems using a spectral approach. Proceedings of BS2013, 2691–2698.
+"""
+function n_active_heat_pumps(Qb_capped::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
+    n_HP::Real, perf_heating, perf_cooling)
 
-    for k in eachindex(Tsrc)
-        CAP[k], COP[k] = heat_pump_performance(Tsrc[k], Tsrc_grid, CAP_vec, COP_vec)
+    # Check
+    length(Qb_capped) == length(Tsrc) ||
+        throw(DimensionMismatch("Qb_capped and Tsrc must have the same length."))
+
+    n = similar(Qb_capped, Float64)
+    COP = similar(Qb_capped, Float64)
+    for k in eachindex(Qb_capped, Tsrc)
+        CAPk, COPk = Qb_capped[k] >= 0 ? heat_pump_performance(Tsrc[k], perf_heating...) :
+                     heat_pump_performance(Tsrc[k], perf_cooling...)
+        COP[k] = COPk
+        n[k] = CAPk > 0 ? clamp(abs(Qb_capped[k]) / CAPk, 0.0, n_HP) : 0.0
     end
-
-    return CAP, COP
+    return n, COP
 end

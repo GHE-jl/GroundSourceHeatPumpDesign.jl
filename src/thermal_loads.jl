@@ -1,21 +1,54 @@
-
 """
-    Q_COP(Q, COP_heating, COP_cooling)
+    ground_load(Qb, COP_heating, COP_cooling)
+    ground_load(Qb, COP_heating, COP_cooling, CAP_heating_unit, CAP_cooling_unit; n_HP=1)
+    ground_load(Qb, Tsrc, perf_heating, perf_cooling; n_HP=1)
+    ground_load(Qb, Tsrc, Tload, perf_heating, perf_cooling; n_HP=1)
 
-Convert building thermal load(s) to ground thermal load(s) based on heat pump COP. Inputs can be
-scalar or vector values with the following sign convention:
+Convert a building thermal load to the corresponding ground thermal load, with the sign convention:
 - `Qb > 0`: building heating load -> `Qg < 0`: heat extracted from the ground loop
 - `Qb < 0`: building cooling load -> `Qg > 0`: heat rejected to the ground loop
-For heating, the conversion is `Qg = -Qb * (1 - 1 / COP_heating)`.
-For cooling, the conversion is `Qg = -Qb * (1 + 1 / COP_cooling)`.
+
+# Method 1: fixed COP, no capacity limit: `ground_load(Qb, COP_heating, COP_cooling)`
+The base conversion: `Qg = -Qb * (1 - 1 / COP_heating)` for heating, and
+`Qg = -Qb * (1 + 1 / COP_cooling)` for cooling. `COP_heating` and `COP_cooling` are a single nominal
+value, or, if `Qb` is a vector, can also be vectors of the same length (a per-time-step COP, e.g.
+read [`heat_pump_performance`](@ref) beforehand). Returns `Qg` (there is no unmet load without a
+capacity limit).
+
+# Method 2: fixed COP, capacity-capped: `ground_load(Qb, COP_heating, COP_cooling,
+CAP_heating_unit, CAP_cooling_unit; n_HP=1)`
+Clamps `Qb` to `[-n_HP * CAP_cooling_unit, n_HP * CAP_heating_unit]`, then applies method 1 to the
+clamped load. This is the direct, non-iterative counterpart to method 3: used when the source EFT
+(and thus the true, temperature-dependent COP) isn't known yet, so a fixed nominal COP is used
+instead. Any load beyond capacity is reported as unmet rather than covered. Returns `(Qg, Qb_unmet)`.
+
+# Method 3: performance-curve-based: `ground_load(Qb, Tsrc, [Tload,] perf_heating, perf_cooling;
+n_HP=1)`
+Looks up CAP and COP from `perf_heating` (`Qb >= 0`, heating) or `perf_cooling` (`Qb < 0`, cooling)
+via [`heat_pump_performance`](@ref) at the current source (and, for the 2D overload, load) EFT, caps
+the heat pump's contribution at `n_HP` times that CAP, then applies method 1 with the resulting COP.
+`perf_heating` and `perf_cooling` are tuples of arguments forwarded to `heat_pump_performance`.
+Either `(Tsrc_grid, CAP_vec, COP_vec)` for the 1D overload or `(Tsrc_grid, Tload_grid, CAP_table,
+COP_table)` for the 2D overload. Returns `(Qg, Qb_unmet)`.
+
 # Arguments
     - `Qb`: Building thermal load, scalar or vector [W]
-    - `COP_heating`: Heating COP, scalar or vector
-    - `COP_cooling`: Cooling COP, scalar or vector
+    - `COP_heating`, `COP_cooling`: Heating/cooling COP, scalar, or vector matching `Qb` [-]
+    - `CAP_heating_unit`, `CAP_cooling_unit`: Heating/cooling capacity of one heat pump unit [W]
+    - `n_HP`: Number of installed heat pump units (methods 2-3 only); scales `CAP_heating_unit`/
+        `CAP_cooling_unit` (method 2), or the CAP looked up from `perf_heating`/`perf_cooling`
+        (method 3), to the total installed capacity. Defaults to `1`, i.e. the CAP argument(s)
+        already represent the total installed capacity
+    - `Tsrc`, `Tload`: Source/load entering fluid temperature, scalar or vector matching `Qb` [°C]
+    - `perf_heating`, `perf_cooling`: Single heat pump unit's heating/cooling performance data,
+        forwarded to [`heat_pump_performance`](@ref)
 # Output
-    - `Qg`: Ground thermal load, scalar or vector with the same shape as `Qb` [W]
+    - `Qg`: Ground thermal load, same shape as `Qb` [W]
+    - `Qb_unmet` (methods 2-3 only): Building load left unmet by the installed heat pump capacity,
+        same shape as `Qb` [W]
 """
-function Q_COP(Qb::Real, COP_heating::Real, COP_cooling::Real)
+function ground_load(Qb::Real, COP_heating::Real, COP_cooling::Real)
+    # Method 1: fixed COP, no capacity limit
     # Check
     COP_heating > 0 || throw(ArgumentError("COP_heating must be strictly positive."))
     COP_cooling > 0 || throw(ArgumentError("COP_cooling must be strictly positive."))
@@ -25,111 +58,178 @@ function Q_COP(Qb::Real, COP_heating::Real, COP_cooling::Real)
         return -Qb * (1 - 1 / COP_heating)
     elseif Qb < 0
         return -Qb * (1 + 1 / COP_cooling)
+    else
+        return zero(promote_type(Float64, typeof(Qb), typeof(COP_heating), typeof(COP_cooling)))
     end
-
-    # If Qb is zero, return zero with the correct type
-    return zero(promote_type(Float64, typeof(Qb), typeof(COP_heating), typeof(COP_cooling)))
 end
-function Q_COP(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling::Real)
-    # Check
-    T = promote_type(Float64, eltype(Qb), typeof(COP_heating), typeof(COP_cooling))
-    
+function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling::Real)
+    # Method 1: fixed COP, no capacity limit
     # Preallocation
+    T = promote_type(Float64, eltype(Qb), typeof(COP_heating), typeof(COP_cooling))
     Qg = similar(Qb, T)
 
     # Conversion
     for k in eachindex(Qb)
-        Qg[k] = Q_COP(Qb[k], COP_heating, COP_cooling)
+        Qg[k] = ground_load(Qb[k], COP_heating, COP_cooling)
     end
 
     return Qg
 end
-function Q_COP(Qb::AbstractVector{<:Real}, COP_heating::AbstractVector{<:Real},
+function ground_load(Qb::AbstractVector{<:Real}, COP_heating::AbstractVector{<:Real},
     COP_cooling::AbstractVector{<:Real})
+    # Method 1: fixed COP, no capacity limit
     # Check
     length(Qb) == length(COP_heating) ||
         throw(DimensionMismatch("Qb and COP_heating must have the same length."))
     length(Qb) == length(COP_cooling) ||
         throw(DimensionMismatch("Qb and COP_cooling must have the same length."))
-    T = promote_type(Float64, eltype(Qb), eltype(COP_heating), eltype(COP_cooling))
-    
+
     # Preallocation
+    T = promote_type(Float64, eltype(Qb), eltype(COP_heating), eltype(COP_cooling))
     Qg = similar(Qb, T)
 
     # Conversion
     for k in eachindex(Qb, COP_heating, COP_cooling)
-        Qg[k] = Q_COP(Qb[k], COP_heating[k], COP_cooling[k])
+        Qg[k] = ground_load(Qb[k], COP_heating[k], COP_cooling[k])
     end
 
     return Qg
 end
+function ground_load(Qb::Real, COP_heating::Real, COP_cooling::Real,
+    CAP_heating_unit::Real, CAP_cooling_unit::Real; n_HP::Real=1)
+    # Method 2: fixed COP, capacity-capped
+    Qb_capped = clamp(Qb, -n_HP * CAP_cooling_unit, n_HP * CAP_heating_unit)
+    Qb_unmet = Qb - Qb_capped
+    Qg = ground_load(Qb_capped, COP_heating, COP_cooling)
+    return Qg, Qb_unmet
+end
+function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling::Real,
+    CAP_heating_unit::Real, CAP_cooling_unit::Real; n_HP::Real=1)
+    # Method 2: fixed COP, capacity-capped
+    # Preallocation
+    T = promote_type(Float64, eltype(Qb), typeof(COP_heating), typeof(COP_cooling),
+        typeof(CAP_heating_unit), typeof(CAP_cooling_unit), typeof(n_HP))
+    Qg = similar(Qb, T)
+    Qb_unmet = similar(Qb, T)
 
-"""
-    ground_load_capped(Qb, COP_heating, COP_cooling, CAP_heating_total, CAP_cooling_total)
+    # Conversion
+    for k in eachindex(Qb)
+        Qg[k], Qb_unmet[k] = ground_load(Qb[k], COP_heating, COP_cooling,
+            CAP_heating_unit, CAP_cooling_unit; n_HP)
+    end
 
-Convert a building thermal load to a ground thermal load using a fixed nominal COP (rather than
-[`heat_pump_performance`](@ref)'s source-EFT-dependent COP), after clamping the building load to
-what the installed heat pumps can actually deliver. This is the direct, non-iterative counterpart
-to [`ground_load_from_heat_pump`](@ref): since the source EFT is not yet known before the ground
-temperature is simulated, the COP here is a fixed design value instead of being looked up at the
-(unknown) operating temperature, so no outer iteration on the ground response is needed. Any load
-beyond `CAP_heating_total`/`CAP_cooling_total` is reported as unmet rather than covered.
-# Arguments
-    - `Qb`: Building thermal load, scalar or vector [W]
-    - `COP_heating`: Nominal heating COP used for the conversion (fixed, not EFT-dependent) [-]
-    - `COP_cooling`: Nominal cooling COP used for the conversion (fixed, not EFT-dependent) [-]
-    - `CAP_heating_total`: Combined heating capacity of the installed heat pumps, e.g.
-        `n_HP * maximum(CAP_heat_vec)` [W]
-    - `CAP_cooling_total`: Combined cooling capacity of the installed heat pumps [W]
-# Output
-    - `Qg`: Ground thermal load, same sign convention as [`Q_COP`](@ref) [W]
-    - `Qb_unmet`: Building load left unmet by the installed heat pump capacity, same shape as `Qb`
-        [W, or kW]
-"""
-function ground_load_capped(Qb, COP_heating::Real, COP_cooling::Real,
-    CAP_heating_total::Real, CAP_cooling_total::Real)
-    Qb_capped = clamp.(Qb, -CAP_cooling_total, CAP_heating_total)
-    Qb_unmet = Qb .- Qb_capped
-    Qg = Q_COP(Qb_capped, COP_heating, COP_cooling)
     return Qg, Qb_unmet
 end
 
 """
-    ground_load_from_heat_pump(Q_building, Tsrc, Tload, perf_heating, perf_cooling)
+    _ground_load_at_performance(Qb, CAP, COP)
 
-Convert a building thermal load to the corresponding ground load, accounting for the heat pump's
-capacity limit at the current source/load entering fluid temperatures (EFTs).
-The heat pump's CAP and COP are looked up from `perf_heating` (if `Q_building > 0`, heating) or
-`perf_cooling` (if `Q_building < 0`, cooling) via [`heat_pump_performance`](@ref). Each is a tuple
-of arguments forwarded to that function (either `(Tsrc_grid, CAP_vec, COP_vec)` for the 1D overload
-or `(Tsrc_grid, Tload_grid, CAP_table, COP_table)` for the 2D overload). The heat pump's
-contribution is capped at its capacity (any load beyond that is reported as unmet rather than
-extrapolated).
-# Arguments
-    - `Q_building`: Building thermal load, `> 0` for heating, `< 0` for cooling [W]
-    - `Tsrc`: Source entering fluid temperature (EFT) [°C]
-    - `Tload`: Load entering fluid temperature (EFT) [°C]
-    - `perf_heating`: Heat pump heating performance data, given to [`heat_pump_performance`](@ref)
-    - `perf_cooling`: Heat pump cooling performance data, given to [`heat_pump_performance`](@ref)
-# Output
-    - `Q_ground`: Ground load using the same sign convention as [`Q_COP`](@ref) [W, or kW]
-    - `Q_unmet`: Building load left unmet because it exceeds the heat pump's capacity [W, or kW]
+Shared by both `ground_load` performance-curve methods (method 3) once CAP/COP have been looked up
+at the current EFT(s): caps the heat pump's contribution at `CAP`, then hands off to method 1 for
+the arithmetic (passing the same `COP` in both slots is safe since `Qb_hp`'s sign always matches
+`Qb`'s (only one of method 1's branches ever fires). Internal helper, not exported.
 """
-function ground_load_from_heat_pump(Q_building, Tsrc, Tload, perf_heating, perf_cooling)
-    if Q_building > 0
-        CAP, COP = heat_pump_performance(Tsrc, Tload, perf_heating...)
-        Q_hp = min(Q_building, CAP)
-        Qg = -Q_hp * (1 - 1 / COP)
-        Qb_unmet = Q_building - Q_hp
-    elseif Q_building < 0
-        CAP, COP = heat_pump_performance(Tsrc, Tload, perf_cooling...)
-        Q_hp = min(-Q_building, CAP)
-        Qg = Q_hp * (1 + 1 / COP)
-        Qb_unmet = -Q_building - Q_hp
-    else
-        Qg = 0.0
-        Qb_unmet = 0.0
+function _ground_load_at_performance(Qb::Real, CAP::Real, COP::Real)
+    # Cap the heat pump's contribution at its current CAP
+    Qb_hp = Qb >= 0 ? min(Qb, CAP) : max(Qb, -CAP)
+    # Compute the ground load and unmet building load
+    Qg = ground_load(Qb_hp, COP, COP)
+    Qb_unmet = Qb - Qb_hp
+    return Qg, Qb_unmet
+end
+
+function ground_load(Qb::Real, Tsrc::Real, perf_heating::Tuple, perf_cooling::Tuple; n_HP::Real=1)
+    # Method 3: performance-curve-based, 1D overload
+    CAP, COP = Qb >= 0 ? heat_pump_performance(Tsrc, perf_heating...) :
+               heat_pump_performance(Tsrc, perf_cooling...)
+    return _ground_load_at_performance(Qb, n_HP * CAP, COP)
+end
+function ground_load(Qb::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
+    perf_heating::Tuple, perf_cooling::Tuple; n_HP::Real=1)
+    # Method 3: performance-curve-based, 1D overload
+    # Check
+    length(Qb) == length(Tsrc) || throw(DimensionMismatch("Qb and Tsrc must have the same length."))
+    T = promote_type(Float64, eltype(Qb), eltype(Tsrc))
+
+    # Preallocation
+    Qg = similar(Qb, T)
+    Qb_unmet = similar(Qb, T)
+
+    # Conversion
+    for k in eachindex(Qb, Tsrc)
+        Qg[k], Qb_unmet[k] = ground_load(Qb[k], Tsrc[k], perf_heating, perf_cooling; n_HP)
     end
 
     return Qg, Qb_unmet
+end
+function ground_load(Qb::Real, Tsrc::Real, Tload::Real, perf_heating::Tuple, perf_cooling::Tuple;
+    n_HP::Real=1)
+    # Method 3: performance-curve-based, 2D overload
+    CAP, COP = Qb >= 0 ? heat_pump_performance(Tsrc, Tload, perf_heating...) :
+               heat_pump_performance(Tsrc, Tload, perf_cooling...)
+    return _ground_load_at_performance(Qb, n_HP * CAP, COP)
+end
+function ground_load(Qb::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
+    Tload::AbstractVector{<:Real}, perf_heating::Tuple, perf_cooling::Tuple; n_HP::Real=1)
+    # Method 3: performance-curve-based, 2D overload
+    # Check
+    length(Qb) == length(Tsrc) == length(Tload) ||
+        throw(DimensionMismatch("Qb, Tsrc and Tload must have the same length."))
+    T = promote_type(Float64, eltype(Qb), eltype(Tsrc), eltype(Tload))
+
+    # Preallocation
+    Qg = similar(Qb, T)
+    Qb_unmet = similar(Qb, T)
+
+    # Conversion
+    for k in eachindex(Qb, Tsrc, Tload)
+        Qg[k], Qb_unmet[k] = ground_load(Qb[k], Tsrc[k], Tload[k], perf_heating, perf_cooling; n_HP)
+    end
+
+    return Qg, Qb_unmet
+end
+
+"""
+    n_active_heat_pumps(Qb_hp, Tsrc, n_HP, perf_heating, perf_cooling)
+
+Number of heat pumps operating at each time step to deliver `Qb_hp`, given the source EFT `Tsrc`
+(e.g. from a ground temperature simulation) and a single unit's performance curve. Following
+Pasquier et al. (2013), this is a fractional, time-averaged count (between `0` and `n_HP`) rather
+than an integer, since a heat pump typically cycles within a time step instead of switching exactly
+on its boundary.
+# Arguments
+    - `Qb_hp`: Building load actually delivered by the heat pumps (post-capacity-capping
+        - E.g. `Qg` and `Qb_unmet` adjusted load from [`ground_load`](@ref)) [W]
+    - `Tsrc`: Source entering fluid temperature (EFT) [°C]
+    - `n_HP`: Number of installed heat pumps
+    - `perf_heating`: Single heat pump's heating performance data, forwarded to
+        [`heat_pump_performance`](@ref) (`(Tsrc_grid, CAP_vec, COP_vec)`)
+    - `perf_cooling`: Single heat pump's cooling performance data, forwarded to
+        [`heat_pump_performance`](@ref)
+# Output
+    - `n`: Fractional number of heat pumps operating, in `[0, n_HP]`
+    - `COP`: Coefficient of performance at each time step, from the same interpolation as `n`
+# Reference
+    - Pasquier, P., Marcotte, D., Bernier, M., & Kummert, M. (2013). Simulation of ground-coupled
+        heat pump systems using a spectral approach. Proceedings of BS2013, 2691–2698.
+"""
+function n_active_heat_pumps(Qb_hp::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
+    n_HP::Real, perf_heating::Tuple, perf_cooling::Tuple)
+
+    # Check
+    length(Qb_hp) == length(Tsrc) ||
+        throw(DimensionMismatch("Qb_hp and Tsrc must have the same length."))
+
+    # Preallocation
+    n = similar(Qb_hp, Float64)
+    COP = similar(Qb_hp, Float64)
+
+    # Conversion between building load and number of active heat pumps
+    for k in eachindex(Qb_hp, Tsrc)
+        CAPk, COPk = Qb_hp[k] >= 0 ? heat_pump_performance(Tsrc[k], perf_heating...) :
+                     heat_pump_performance(Tsrc[k], perf_cooling...)
+        COP[k] = COPk
+        n[k] = CAPk > 0 ? clamp(abs(Qb_hp[k]) / CAPk, 0.0, n_HP) : 0.0
+    end
+    return n, COP
 end

@@ -19,7 +19,8 @@ Difference between the mean temperature of the last simulated year and the first
 the long-term thermal drift of the ground.
 # Arguments
     - `T`: Temperature time series [°C], covering an integer number of years
-    - `steps_per_year`: Number of time steps per year (e.g. `8760` for an hourly simulation)
+    - `steps_per_year`: Number of time steps per year
+        - E.g. `8760` for an hourly simulation
 # Output
     - Annual drift, last year's mean minus first year's mean [°C]
 """
@@ -37,7 +38,8 @@ Total thermal energy of a load time series, by rectangular (constant time step) 
     - `Q`: Thermal load time series [W, or kW]
     - `dt`: Time step duration [h]
 # Output
-    - Total energy, in the same power unit times hours (e.g. kWh if `Q` is in kW)
+    - Total energy, in the same power unit times hours 
+        - E.g. kWh if `Q` is in kW
 """
 function thermal_energy(Q::AbstractVector{<:Real}, dt::Real)
     return sum(Q) * dt

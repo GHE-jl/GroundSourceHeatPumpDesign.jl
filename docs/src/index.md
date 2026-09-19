@@ -23,10 +23,12 @@ physics. Its own heat pump/load layer has no ground-physics dependency and can b
   coefficient of performance (COP) from manufacturer performance data, via 1D linear interpolation
   on the source entering fluid temperature (EFT) or 2D bilinear interpolation on both source and
   load EFTs. Values are clamped outside the provided grid.
-- **Building-to-ground load conversion** ([`Q_COP`](@ref), [`ground_load_from_heat_pump`](@ref),
-  [`ground_load_capped`](@ref)) — converts a building heating/cooling load into the corresponding
-  ground load using the heat pump's COP, respecting the sign convention that a building heating
-  load extracts heat from the ground loop and a building cooling load rejects heat to it.
+- **Building-to-ground load conversion** ([`ground_load`](@ref)) — converts a building
+  heating/cooling load into the corresponding ground load using the heat pump's COP, respecting the
+  sign convention that a building heating load extracts heat from the ground loop and a building
+  cooling load rejects heat to it. One function name with methods of increasing complexity: fixed
+  COP, fixed COP with capacity capping, and performance-curve-based (temperature-dependent CAP/COP,
+  capacity-capped).
 - **[`gshp_simulation`](@ref)** — a full, single-pass GSHP simulation combining the above with
   [`GroundHeatExchanger.jl`](https://github.com/GHE-jl/GroundHeatExchanger.jl)'s g-function and
   effective borehole resistance, plus [`n_active_heat_pumps`](@ref), [`unmet_hours`](@ref),
@@ -38,4 +40,7 @@ physics. Its own heat pump/load layer has no ground-physics dependency and can b
 ## Where to next
 
 - **[Tutorial](@ref)** — a worked example combining the pieces above.
+- **[Modeling theory](@ref)** — the interpolation, load-conversion and staging equations, and the
+  non-iterative simulation's rationale.
 - **[API reference](@ref)** — the complete docstring reference for every exported function.
+- **[References](@ref)** — the bibliography underpinning the implementation.

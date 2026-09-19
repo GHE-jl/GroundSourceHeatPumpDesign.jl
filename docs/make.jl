@@ -23,7 +23,9 @@ makedocs(;
     pages = [
         "Home" => "index.md",
         "Tutorial" => "tutorial.md",
+        "Modeling theory" => "theory.md",
         "API reference" => "api.md",
+        "References" => "references.md",
     ],
     # Keep the build strict so broken cross-references or missing docstrings fail CI.
     checkdocs = :exports,

@@ -98,10 +98,10 @@ end
 function ground_load(Qb::Real, COP_heating::Real, COP_cooling::Real,
     CAP_heating_unit::Real, CAP_cooling_unit::Real; n_HP::Real=1)
     # Method 2: fixed COP, capacity-capped
-    Qb_capped = clamp(Qb, -n_HP * CAP_cooling_unit, n_HP * CAP_heating_unit)
-    Qb_unmet = Qb - Qb_capped
-    Qg = ground_load(Qb_capped, COP_heating, COP_cooling)
-    return Qg, Qb_unmet
+    Qb_hp = clamp(Qb, -n_HP * CAP_cooling_unit, n_HP * CAP_heating_unit)
+    Qb_unmet = Qb - Qb_hp
+    Qg = ground_load(Qb_hp, COP_heating, COP_cooling)
+    return Qg, Qb_unmet, Qb_hp #TODO Also output Qb_hp. Update where required to be consistent with this change.
 end
 function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling::Real,
     CAP_heating_unit::Real, CAP_cooling_unit::Real; n_HP::Real=1)
@@ -118,7 +118,7 @@ function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling:
             CAP_heating_unit, CAP_cooling_unit; n_HP)
     end
 
-    return Qg, Qb_unmet
+    return Qg, Qb_unmet, Qb .- Qb_unmet #TODO Also output Qb_hp. Update where required to be consistent with this change.
 end
 
 """
@@ -135,7 +135,7 @@ function _ground_load_at_performance(Qb::Real, CAP::Real, COP::Real)
     # Compute the ground load and unmet building load
     Qg = ground_load(Qb_hp, COP, COP)
     Qb_unmet = Qb - Qb_hp
-    return Qg, Qb_unmet
+    return Qg, Qb_unmet, Qb_hp
 end
 
 function ground_load(Qb::Real, Tsrc::Real, perf_heating::Tuple, perf_cooling::Tuple; n_HP::Real=1)
@@ -154,13 +154,14 @@ function ground_load(Qb::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
     # Preallocation
     Qg = similar(Qb, T)
     Qb_unmet = similar(Qb, T)
+    Qb_hp = similar(Qb, T)
 
     # Conversion
     for k in eachindex(Qb, Tsrc)
-        Qg[k], Qb_unmet[k] = ground_load(Qb[k], Tsrc[k], perf_heating, perf_cooling; n_HP)
+        Qg[k], Qb_unmet[k], Qb_hp[k] = ground_load(Qb[k], Tsrc[k], perf_heating, perf_cooling; n_HP)
     end
 
-    return Qg, Qb_unmet
+    return Qg, Qb_unmet, Qb_hp
 end
 function ground_load(Qb::Real, Tsrc::Real, Tload::Real, perf_heating::Tuple, perf_cooling::Tuple;
     n_HP::Real=1)
@@ -180,13 +181,15 @@ function ground_load(Qb::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
     # Preallocation
     Qg = similar(Qb, T)
     Qb_unmet = similar(Qb, T)
+    Qb_hp = similar(Qb, T)
 
     # Conversion
     for k in eachindex(Qb, Tsrc, Tload)
-        Qg[k], Qb_unmet[k] = ground_load(Qb[k], Tsrc[k], Tload[k], perf_heating, perf_cooling; n_HP)
+        Qg[k], Qb_unmet[k], Qb_hp[k] = ground_load(Qb[k], Tsrc[k], Tload[k], perf_heating,
+            perf_cooling; n_HP)
     end
 
-    return Qg, Qb_unmet
+    return Qg, Qb_unmet, Qb_hp
 end
 
 """

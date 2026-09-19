@@ -6,10 +6,10 @@
 # README's "Conventions" section for the sign convention and T_in/T_out nomenclature.
 
 using Pkg; Pkg.activate(@__DIR__)
-Pkg.instantiate()
+# Pkg.instantiate() # Once per machine, to install dependencies in the local environment
 
 using GroundSourceHeatPumpDesign
-using GroundHeatExchanger: borefield_rectangle, water_k, water_cp, water_ρ, water_μ,
+using GroundHeatExchanger: borefield_rectangle, fluid_property,
     ground_load_profile, resistance_ULoop_effective
 using CairoMakie
 
@@ -48,7 +48,7 @@ T0 = 10.0 # undisturbed ground temperature [degC]
 s = 0.05 # shank spacing [m]
 ro, ri = 0.022, 0.017 # pipe outer/inner radius [m]
 kg, kp = 1.6, 0.4 # grout, pipe thermal conductivity [W/mK]
-kf, cf, ρf, μf = water_k(T0), water_cp(T0), water_ρ(T0), water_μ(T0)
+kf, cf, ρf, μf = fluid_property(T0, :water)
 V = 0.5 / 1000 # flow rate per borehole [m3/s]
 
 # Operating temperature limits, checked against T_out (EWT_s, entering the heat pumps)
@@ -58,35 +58,8 @@ res = gshp_simulation(t, Qb, perf_heating, perf_cooling, n_HP, xy, rb, H, D, ks,
     kg, kp, kf, cf, ρf, μf, V, T0)
 
 # Table: temperatures, unmet hours and energy/power for the last simulated year
-last_year = (nt - steps_per_year + 1):nt
-println("Ground temperature, year $n_years (last simulated year):")
-println("  T_in  min/max = $(round(minimum(res.T_in[last_year]); digits=1)) / " *
-        "$(round(maximum(res.T_in[last_year]); digits=1)) degC")
-println("  T_out min/max = $(round(minimum(res.T_out[last_year]); digits=1)) / " *
-        "$(round(maximum(res.T_out[last_year]); digits=1)) degC")
-println("  Hours with T_out outside [$(Tlim[1]), $(Tlim[2])] degC: " *
-        "$(unmet_hours(res.T_out[last_year], Tlim))")
-println("  Annual drift (T_out, last year - first year): " *
-        "$(round(annual_drift(res.T_out, steps_per_year); digits=2)) degC")
-
-MWh(Q) = thermal_energy(Q, 1.0) / 1e6
-println("\nEnergy (MWh) and peak power (kW) over $n_years years:")
-println("  Building heating : $(round(MWh(max.(Qb, 0.0)); digits=1)) MWh, " *
-        "peak $(round(maximum(Qb) / 1000; digits=1)) kW")
-println("  Building cooling : $(round(-MWh(min.(Qb, 0.0)); digits=1)) MWh, " *
-        "peak $(round(-minimum(Qb) / 1000; digits=1)) kW")
-println("  Heat pump heating: $(round(MWh(max.(res.Qb_hp, 0.0)); digits=1)) MWh, " *
-        "peak $(round(maximum(res.Qb_hp) / 1000; digits=1)) kW")
-println("  Heat pump cooling: $(round(-MWh(min.(res.Qb_hp, 0.0)); digits=1)) MWh, " *
-        "peak $(round(-minimum(res.Qb_hp) / 1000; digits=1)) kW")
-println("  Auxiliary heating: $(round(MWh(max.(res.Qb_unmet, 0.0)); digits=1)) MWh, " *
-        "peak $(round(maximum(res.Qb_unmet) / 1000; digits=1)) kW")
-println("  Auxiliary cooling: $(round(-MWh(min.(res.Qb_unmet, 0.0)); digits=1)) MWh, " *
-        "peak $(round(-minimum(res.Qb_unmet) / 1000; digits=1)) kW")
-println("  Ground extraction: $(round(-MWh(min.(res.Qg, 0.0)); digits=1)) MWh, " *
-        "peak $(round(-minimum(res.Qg) / 1000; digits=1)) kW")
-println("  Ground rejection : $(round(MWh(max.(res.Qg, 0.0)); digits=1)) MWh, " *
-        "peak $(round(maximum(res.Qg) / 1000; digits=1)) kW")
+report_gshp_simulation(res.T_in, res.T_out, Qb, res.Qb_hp, res.Qb_unmet, res.Qg, Tlim,
+    steps_per_year)
 
 # Figures
 years = t_h ./ steps_per_year

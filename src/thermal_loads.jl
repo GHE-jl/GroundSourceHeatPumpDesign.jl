@@ -13,14 +13,15 @@ The base conversion: `Qg = -Qb * (1 - 1 / COP_heating)` for heating, and
 `Qg = -Qb * (1 + 1 / COP_cooling)` for cooling. `COP_heating` and `COP_cooling` are a single nominal
 value, or, if `Qb` is a vector, can also be vectors of the same length (a per-time-step COP, e.g.
 read [`heat_pump_performance`](@ref) beforehand). Returns `Qg` (there is no unmet load without a
-capacity limit).
+capacity limit, so no Qb_unmet or Qb_hp).
 
 # Method 2: fixed COP, capacity-capped: `ground_load(Qb, COP_heating, COP_cooling,
 CAP_heating_unit, CAP_cooling_unit; n_HP=1)`
 Clamps `Qb` to `[-n_HP * CAP_cooling_unit, n_HP * CAP_heating_unit]`, then applies method 1 to the
-clamped load. This is the direct, non-iterative counterpart to method 3: used when the source EFT
-(and thus the true, temperature-dependent COP) isn't known yet, so a fixed nominal COP is used
-instead. Any load beyond capacity is reported as unmet rather than covered. Returns `(Qg, Qb_unmet)`.
+clamped load. This is the fixed-COP counterpart to method 3: used when the source entering fluid
+temperature (EFT) (and thus the true, temperature-dependent COP) isn't known yet, so a fixed
+nominal COP is used instead. Any load beyond capacity is reported as unmet rather than covered.
+Returns `(Qg, Qb_unmet, Qb_hp)`.
 
 # Method 3: performance-curve-based: `ground_load(Qb, Tsrc, [Tload,] perf_heating, perf_cooling;
 n_HP=1)`
@@ -29,7 +30,7 @@ via [`heat_pump_performance`](@ref) at the current source (and, for the 2D overl
 the heat pump's contribution at `n_HP` times that CAP, then applies method 1 with the resulting COP.
 `perf_heating` and `perf_cooling` are tuples of arguments forwarded to `heat_pump_performance`.
 Either `(Tsrc_grid, CAP_vec, COP_vec)` for the 1D overload or `(Tsrc_grid, Tload_grid, CAP_table,
-COP_table)` for the 2D overload. Returns `(Qg, Qb_unmet)`.
+COP_table)` for the 2D overload. Returns `(Qg, Qb_unmet, Qb_hp)`.
 
 # Arguments
     - `Qb`: Building thermal load, scalar or vector [W]
@@ -46,6 +47,8 @@ COP_table)` for the 2D overload. Returns `(Qg, Qb_unmet)`.
     - `Qg`: Ground thermal load, same shape as `Qb` [W]
     - `Qb_unmet` (methods 2-3 only): Building load left unmet by the installed heat pump capacity,
         same shape as `Qb` [W]
+    - `Qb_hp` (methods 2-3 only): Building load actually delivered by the heat pumps,
+        `Qb_hp = Qb - Qb_unmet`, same shape as `Qb` [W]
 """
 function ground_load(Qb::Real, COP_heating::Real, COP_cooling::Real)
     # Method 1: fixed COP, no capacity limit
@@ -53,13 +56,14 @@ function ground_load(Qb::Real, COP_heating::Real, COP_cooling::Real)
     COP_heating > 0 || throw(ArgumentError("COP_heating must be strictly positive."))
     COP_cooling > 0 || throw(ArgumentError("COP_cooling must be strictly positive."))
 
-    # Conversion
+    # Conversion (same output type for every branch)
+    T = promote_type(Float64, typeof(Qb), typeof(COP_heating), typeof(COP_cooling))
     if Qb > 0
-        return -Qb * (1 - 1 / COP_heating)
+        return T(-Qb * (1 - 1 / COP_heating))
     elseif Qb < 0
-        return -Qb * (1 + 1 / COP_cooling)
+        return T(-Qb * (1 + 1 / COP_cooling))
     else
-        return zero(promote_type(Float64, typeof(Qb), typeof(COP_heating), typeof(COP_cooling)))
+        return zero(T)
     end
 end
 function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling::Real)
@@ -101,7 +105,7 @@ function ground_load(Qb::Real, COP_heating::Real, COP_cooling::Real,
     Qb_hp = clamp(Qb, -n_HP * CAP_cooling_unit, n_HP * CAP_heating_unit)
     Qb_unmet = Qb - Qb_hp
     Qg = ground_load(Qb_hp, COP_heating, COP_cooling)
-    return Qg, Qb_unmet, Qb_hp #TODO Also output Qb_hp. Update where required to be consistent with this change.
+    return Qg, Qb_unmet, Qb_hp
 end
 function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling::Real,
     CAP_heating_unit::Real, CAP_cooling_unit::Real; n_HP::Real=1)
@@ -111,14 +115,15 @@ function ground_load(Qb::AbstractVector{<:Real}, COP_heating::Real, COP_cooling:
         typeof(CAP_heating_unit), typeof(CAP_cooling_unit), typeof(n_HP))
     Qg = similar(Qb, T)
     Qb_unmet = similar(Qb, T)
+    Qb_hp = similar(Qb, T)
 
     # Conversion
     for k in eachindex(Qb)
-        Qg[k], Qb_unmet[k] = ground_load(Qb[k], COP_heating, COP_cooling,
+        Qg[k], Qb_unmet[k], Qb_hp[k] = ground_load(Qb[k], COP_heating, COP_cooling,
             CAP_heating_unit, CAP_cooling_unit; n_HP)
     end
 
-    return Qg, Qb_unmet, Qb .- Qb_unmet #TODO Also output Qb_hp. Update where required to be consistent with this change.
+    return Qg, Qb_unmet, Qb_hp
 end
 
 """
@@ -127,7 +132,7 @@ end
 Shared by both `ground_load` performance-curve methods (method 3) once CAP/COP have been looked up
 at the current EFT(s): caps the heat pump's contribution at `CAP`, then hands off to method 1 for
 the arithmetic (passing the same `COP` in both slots is safe since `Qb_hp`'s sign always matches
-`Qb`'s (only one of method 1's branches ever fires). Internal helper, not exported.
+`Qb`'s, so only one of method 1's branches ever fires).
 """
 function _ground_load_at_performance(Qb::Real, CAP::Real, COP::Real)
     # Cap the heat pump's contribution at its current CAP
@@ -194,6 +199,7 @@ end
 
 """
     n_active_heat_pumps(Qb_hp, Tsrc, n_HP, perf_heating, perf_cooling)
+    #TODO add 2D overload
 
 Number of heat pumps operating at each time step to deliver `Qb_hp`, given the source EFT `Tsrc`
 (e.g. from a ground temperature simulation) and a single unit's performance curve. Following
@@ -201,8 +207,8 @@ Pasquier et al. (2013), this is a fractional, time-averaged count (between `0` a
 than an integer, since a heat pump typically cycles within a time step instead of switching exactly
 on its boundary.
 # Arguments
-    - `Qb_hp`: Building load actually delivered by the heat pumps (post-capacity-capping
-        - E.g. `Qg` and `Qb_unmet` adjusted load from [`ground_load`](@ref)) [W]
+    - `Qb_hp`: Building load actually delivered by the heat pumps, post-capacity-capping (the
+        third output of [`ground_load`](@ref), methods 2-3) [W]
     - `Tsrc`: Source entering fluid temperature (EFT) [°C]
     - `n_HP`: Number of installed heat pumps
     - `perf_heating`: Single heat pump's heating performance data, forwarded to

@@ -36,20 +36,21 @@ CAP_cool_fine, COP_cool_fine = heat_pump_performance(Tsrc_cool_fine, perf_coolin
 fig1 = Figure()
 
 ax1 = Axis(fig1[1, 1], xlabel="Source EFT [°C]", ylabel="CAP [kW]", title="Heating capacity (1D)")
-lines!(ax1, Tsrc_heat_fine, CAP_heat_fine ./ 1000)
-scatter!(ax1, Tsrc_grid_heat, CAP_heat_vec ./ 1000)
+lines!(ax1, Tsrc_heat_fine, CAP_heat_fine ./ 1000, color=:black, label="Interpolated")
+scatter!(ax1, Tsrc_grid_heat, CAP_heat_vec ./ 1000, color=:blue, label="Data")
+axislegend(ax1, position=:lt)
 
 ax2 = Axis(fig1[1, 2], xlabel="Source EFT [°C]", ylabel="COP [-]", title="Heating COP (1D)")
-lines!(ax2, Tsrc_heat_fine, COP_heat_fine)
-scatter!(ax2, Tsrc_grid_heat, COP_heat_vec)
+lines!(ax2, Tsrc_heat_fine, COP_heat_fine, color=:black)
+scatter!(ax2, Tsrc_grid_heat, COP_heat_vec, color=:blue)
 
 ax3 = Axis(fig1[2, 1], xlabel="Source EFT [°C]", ylabel="CAP [kW]", title="Cooling capacity (1D)")
-lines!(ax3, Tsrc_cool_fine, CAP_cool_fine ./ 1000)
-scatter!(ax3, Tsrc_grid_cool, CAP_cool_vec ./ 1000)
+lines!(ax3, Tsrc_cool_fine, CAP_cool_fine ./ 1000, color=:black)
+scatter!(ax3, Tsrc_grid_cool, CAP_cool_vec ./ 1000, color=:blue)
 
 ax4 = Axis(fig1[2, 2], xlabel="Source EFT [°C]", ylabel="COP [-]", title="Cooling COP (1D)")
-lines!(ax4, Tsrc_cool_fine, COP_cool_fine)
-scatter!(ax4, Tsrc_grid_cool, COP_cool_vec)
+lines!(ax4, Tsrc_cool_fine, COP_cool_fine, color=:black)
+scatter!(ax4, Tsrc_grid_cool, COP_cool_vec, color=:blue)
 
 display(fig1)
 
@@ -71,7 +72,8 @@ COP_table_heat = [2.8 2.5 2.2 2.0
 perf_heating_2d = (Tsrc_grid_heat, Tload_grid_heat, CAP_table_heat, COP_table_heat)
 
 Tload_grid_cool = [7.0, 12.0, 18.0] # [°C] load EFT grid (e.g. chilled water loop, cooling)
-# CAP and COP decrease with Tsrc (warmer source) and decrease with Tload (colder supply required).
+# CAP and COP decrease with Tsrc (warmer source) and increase with Tload (warmer chilled water
+# return, easier to cool).
 CAP_table_cool = [12.0 13.0 14.0
                   11.0 12.0 13.0
                   10.0 11.0 12.0
@@ -82,60 +84,84 @@ COP_table_cool = [5.0 5.6 6.2
                   3.2 3.6 4.0] # [-]
 perf_cooling_2d = (Tsrc_grid_cool, Tload_grid_cool, CAP_table_cool, COP_table_cool)
 
-# Scalar overload: Full surface, evaluated point by point over a fine 2D grid, for plotting
-Tsrc_heat_fine2 = collect(range(Tsrc_grid_heat[1], Tsrc_grid_heat[end], length=100))
-Tload_heat_fine2 = collect(range(Tload_grid_heat[1], Tload_grid_heat[end], length=100))
-Tsrc_cool_fine2 = collect(range(Tsrc_grid_cool[1], Tsrc_grid_cool[end], length=100))
-Tload_cool_fine2 = collect(range(Tload_grid_cool[1], Tload_grid_cool[end], length=100))
+# Scalar overload: Full surface, evaluated point by point over a fine 2D grid extended `margin`
+# beyond the data on both axes, for plotting. Outside the data, the surface is clamped (constant
+# along the clamped axis).
+margin = 5.0 # [°C]
+Tsrc_heat_fine2 = collect(range(Tsrc_grid_heat[1]-margin, Tsrc_grid_heat[end]+margin, length=100))
+Tload_heat_fine2 = collect(range(Tload_grid_heat[1]-margin, Tload_grid_heat[end]+margin,
+    length=100))
+Tsrc_cool_fine2 = collect(range(Tsrc_grid_cool[1]-margin, Tsrc_grid_cool[end]+margin, length=100))
+Tload_cool_fine2 = collect(range(Tload_grid_cool[1]-margin, Tload_grid_cool[end]+margin,
+    length=100))
 
 surf_heat = [heat_pump_performance(Ts, Tl, perf_heating_2d...)
     for Ts in Tsrc_heat_fine2, Tl in Tload_heat_fine2]
-CAP_surf_heat = first.(surf_heat)
-COP_surf_heat = last.(surf_heat)
+CAP_surf_heat = first.(surf_heat)   # Parsing for CAP
+COP_surf_heat = last.(surf_heat)    # Parsing for COP
 
 surf_cool = [heat_pump_performance(Ts, Tl, perf_cooling_2d...)
     for Ts in Tsrc_cool_fine2, Tl in Tload_cool_fine2]
-CAP_surf_cool = first.(surf_cool)
-COP_surf_cool = last.(surf_cool)
+CAP_surf_cool = first.(surf_cool)   # Parsing for CAP
+COP_surf_cool = last.(surf_cool)    # Parsing for COP
+
+# 2D performance surfaces for heating and cooling, with the data bounds (dashed rectangle, clamping
+# outside) and the diagonal (Tsrc, Tload) path (solid line)
+rect(xg, yg) = ([xg[1], xg[end], xg[end], xg[1], xg[1]], [yg[1], yg[1], yg[end], yg[end], yg[1]])
+rect_heat = rect(Tsrc_grid_heat, Tload_grid_heat)
+rect_cool = rect(Tsrc_grid_cool, Tload_grid_cool)
 
 fig2 = Figure()
+
 ax1 = Axis(fig2[1, 1], xlabel="Source EFT [°C]", ylabel="Load EFT [°C]",
     title="Heating CAP [kW] (2D)")
 hm1 = heatmap!(ax1, Tsrc_heat_fine2, Tload_heat_fine2, CAP_surf_heat ./ 1000)
+lines!(ax1, rect_heat..., color=:white, linestyle=:dash)
 Colorbar(fig2[1, 2], hm1)
+
 ax2 = Axis(fig2[1, 3], xlabel="Source EFT [°C]", ylabel="Load EFT [°C]", title="Heating COP (2D)")
 hm2 = heatmap!(ax2, Tsrc_heat_fine2, Tload_heat_fine2, COP_surf_heat)
+lines!(ax2, rect_heat..., color=:white, linestyle=:dash)
 Colorbar(fig2[1, 4], hm2)
+
 ax3 = Axis(fig2[2, 1], xlabel="Source EFT [°C]", ylabel="Load EFT [°C]",
     title="Cooling CAP [kW] (2D)")
 hm3 = heatmap!(ax3, Tsrc_cool_fine2, Tload_cool_fine2, CAP_surf_cool ./ 1000)
+lines!(ax3, rect_cool..., color=:white, linestyle=:dash)
 Colorbar(fig2[2, 2], hm3)
+
 ax4 = Axis(fig2[2, 3], xlabel="Source EFT [°C]", ylabel="Load EFT [°C]", title="Cooling COP (2D)")
 hm4 = heatmap!(ax4, Tsrc_cool_fine2, Tload_cool_fine2, COP_surf_cool)
+lines!(ax4, rect_cool..., color=:white, linestyle=:dash)
 Colorbar(fig2[2, 4], hm4)
+
 display(fig2)
 
-# Vector overload: a paired (Tsrc, Tload) trajectory, as would occur along a simulated time series,
-# swept diagonally across the 2D domain for illustration.
-Tsrc_heat_vec = collect(range(Tsrc_grid_heat[1], Tsrc_grid_heat[end], length=100))
-Tload_heat_vec = collect(range(Tload_grid_heat[1], Tload_grid_heat[end], length=100))
-CAP_vec, COP_vec = heat_pump_performance(Tsrc_heat_vec, Tload_heat_vec, perf_heating_2d...)
-
-Tsrc_cool_vec = collect(range(Tsrc_grid_cool[1], Tsrc_grid_cool[end], length=100))
-Tload_cool_vec = collect(range(Tload_grid_cool[1], Tload_grid_cool[end], length=100))
-CAP_vec, COP_vec = heat_pump_performance(Tsrc_cool_vec, Tload_cool_vec, perf_cooling_2d...)
-
+# Vector overload, manufacturer-chart style: CAP and COP vs source EFT, one curve per load EFT of
+# the table (Tload held constant along each curve), with the table data as points. Same source EFT
+# range as fig1 (10 °C beyond the data), showing the clamping on the source EFT axis.
 fig3 = Figure()
-ax1 = Axis(fig3[1, 1], xlabel="Source EFT [°C]", ylabel="CAP [kW]",
-    title="Heating capacity along a (Tsrc, Tload) path")
-lines!(ax1, Tsrc_heat_vec, CAP_vec ./ 1000)
-ax2 = Axis(fig3[1, 2], xlabel="Source EFT [°C]", ylabel="COP [-]",
-    title="Heating COP along a (Tsrc, Tload) path")
-lines!(ax2, Tsrc_heat_vec, COP_vec)
-ax3 = Axis(fig3[2, 1], xlabel="Source EFT [°C]", ylabel="CAP [kW]",
-    title="Cooling capacity along a (Tsrc, Tload) path")
-lines!(ax3, Tsrc_cool_vec, CAP_vec ./ 1000)
-ax4 = Axis(fig3[2, 2], xlabel="Source EFT [°C]", ylabel="COP [-]",
-    title="Cooling COP along a (Tsrc, Tload) path")
-lines!(ax4, Tsrc_cool_vec, COP_vec)
+ax1 = Axis(fig3[1, 1], xlabel="Source EFT [°C]", ylabel="CAP [kW]", title="Heating capacity (2D)")
+ax2 = Axis(fig3[1, 2], xlabel="Source EFT [°C]", ylabel="COP [-]", title="Heating COP (2D)")
+ax3 = Axis(fig3[2, 1], xlabel="Source EFT [°C]", ylabel="CAP [kW]", title="Cooling capacity (2D)")
+ax4 = Axis(fig3[2, 2], xlabel="Source EFT [°C]", ylabel="COP [-]", title="Cooling COP (2D)")
+
+for (j, Tl) in enumerate(Tload_grid_heat)
+    CAP, COP = heat_pump_performance(Tsrc_heat_fine, fill(Tl, length(Tsrc_heat_fine)),
+        perf_heating_2d...)
+    lines!(ax1, Tsrc_heat_fine, CAP ./ 1000, color=Cycled(j), label="$Tl °C")
+    scatter!(ax1, Tsrc_grid_heat, CAP_table_heat[:, j] ./ 1000, color=Cycled(j))
+    lines!(ax2, Tsrc_heat_fine, COP, color=Cycled(j))
+    scatter!(ax2, Tsrc_grid_heat, COP_table_heat[:, j], color=Cycled(j))
+end
+for (j, Tl) in enumerate(Tload_grid_cool)
+    CAP, COP = heat_pump_performance(Tsrc_cool_fine, fill(Tl, length(Tsrc_cool_fine)),
+        perf_cooling_2d...)
+    lines!(ax3, Tsrc_cool_fine, CAP ./ 1000, color=Cycled(j), label="$Tl °C")
+    scatter!(ax3, Tsrc_grid_cool, CAP_table_cool[:, j] ./ 1000, color=Cycled(j))
+    lines!(ax4, Tsrc_cool_fine, COP, color=Cycled(j))
+    scatter!(ax4, Tsrc_grid_cool, COP_table_cool[:, j], color=Cycled(j))
+end
+Legend(fig3[1, 3], ax1, "Load EFT")
+Legend(fig3[2, 3], ax3, "Load EFT")
 display(fig3)

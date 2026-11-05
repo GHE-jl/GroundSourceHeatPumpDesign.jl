@@ -64,7 +64,7 @@ _, COP_cooling_series = heat_pump_performance(Tsrc, Tsrc_grid_cool, CAP_cool_vec
 # Conversion with variable COP
 Qg_variable = ground_load(Qb, COP_heating_series, COP_cooling_series) # [W]
 
-# Fixed vs. variable COP, both uncapped (method 1, so no unmet load in either case): shows how
+# Method 1: Fixed vs. variable COP, both uncapped (no unmet load in either case). Shows how
 # letting COP track Tsrc shifts the ground load's magnitude relative to a single nominal COP.
 # Larger heat extraction where Tsrc is coldest (worse heating COP) and larger heat rejection where
 # Tsrc is warmest (worse cooling COP), tracking the Tsrc sweep from fig0.
@@ -74,46 +74,49 @@ ax1 = Axis(fig1[1, 1], xlabel="Time [h]", ylabel="Ground load [kW]",
 lines!(ax1, t_h, Qg_fixed ./ 1000, label="Fixed nominal COP")
 lines!(ax1, t_h, Qg_variable ./ 1000, label="Variable COP (illustrative Tsrc)")
 axislegend(ax1, position=:cb)
-ax2 = Axis(fig1[2, 1], xlabel="Time [h]", ylabel="Ground load [kW]",
-    title="Method 1: fixed vs. variable COP (no capacity limit)")
+ax2 = Axis(fig1[2, 1], xlabel="Time [h]", ylabel="Ground load [kW]")
 lines!(ax2, t_h, (Qg_fixed .- Qg_variable) ./ 1000, label="Difference (fixed - variable)")
 axislegend(ax2, position=:cb)
 display(fig1)
 
 # Method 2: fixed nominal COP, capacity-capped
 
-Qg_capped, Qb_unmet = ground_load(Qb, COP_heating_nominal, COP_cooling_nominal,
+# Conversion with fixed COP and capacity limit
+Qg_capped, Qb_unmet, Qb_hp = ground_load(Qb, COP_heating_nominal, COP_cooling_nominal,
     maximum(CAP_heat_vec), maximum(CAP_cool_vec); n_HP)
-Qb_hp = Qb .- Qb_unmet
 
+dt = 1.0 # [h] time step, for thermal_energy (W * h = Wh)
 println("Method 2 (capacity-capped, fixed COP):")
 println("  Unmet hours: $(count(!=(0.0), Qb_unmet)) / $(length(Qb))")
-println("  Unmet loads: $(sum(Qb_unmet) / 1000) kW")
+println("  Unmet energy: $(round(thermal_energy(max.(Qb_unmet, 0.0), dt) / 1000; digits=1)) " *
+    "kWh heating, $(round(-thermal_energy(min.(Qb_unmet, 0.0), dt) / 1000; digits=1)) kWh cooling")
 
-# Effect of the installed capacity limit on top of a fixed nominal COP (method 2): top panel
+# Method 2: Effect of the installed capacity limit on top of a fixed nominal COP. Top panel
 # compares raw building demand against what the installed heat pumps can actually cover; middle
-# panel is the resulting unmet load, non-zero only where demand exceeds the installed
+# panel is the resulting building unmet load, non-zero only where demand exceeds the installed
 # n_HP * CAP_heating_unit/CAP_cooling_unit (the peaks of the winter/summer demand); bottom panel is
 # the corresponding (capped) ground load.
 fig2 = Figure()
-ax1 = Axis(fig2[1, 1], ylabel="Building load [kW]",
+ax1 = Axis(fig2[1, 1], ylabel=L"$Q_b$ [kW]",
     title="Method 2: capacity-capped (fixed nominal COP)")
 lines!(ax1, t_h, Qb ./ 1000, color=(:gray, 0.6), label="Building demand")
-lines!(ax1, t_h, Qb_hp ./ 1000, color=:steelblue, label="Covered by heat pump(s)")
+lines!(ax1, t_h, Qb_hp ./ 1000, color=:steelblue, label="Covered by HP(s)")
 axislegend(ax1, position=:rt)
-ax2 = Axis(fig2[2, 1], ylabel="Unmet building load [kW]")
+ax2 = Axis(fig2[2, 1], ylabel=L"$Q_{b,\mathrm{unmet}}$ [kW]")
 lines!(ax2, t_h, Qb_unmet ./ 1000, color=:firebrick)
-ax3 = Axis(fig2[3, 1], xlabel="Time [h]", ylabel = "Ground load [kW]")
+ax3 = Axis(fig2[3, 1], xlabel="Time [h]", ylabel = L"$Q_g$ [kW]")
 lines!(ax3, t_h, Qg_capped ./ 1000, color=:goldenrod)
 display(fig2)
 
 # Method 3: performance-curve-based (variable COP + capacity together)
 
-Qg_curve, Qb_unmet_curve = ground_load(Qb, Tsrc, perf_heating, perf_cooling; n_HP)
+Qg_curve, Qb_unmet_curve, Qb_hp_curve = ground_load(Qb, Tsrc, perf_heating, perf_cooling; n_HP)
 
 println("Method 3 (performance-curve-based):")
 println("  Unmet hours: $(count(!=(0.0), Qb_unmet_curve)) / $(length(Qb))")
-println("  Unmet loads: $(sum(Qb_unmet_curve) / 1000) kW")
+println("  Unmet energy: " *
+    "$(round(thermal_energy(max.(Qb_unmet_curve, 0.0), dt) / 1000; digits=1)) kWh heating, " *
+    "$(round(-thermal_energy(min.(Qb_unmet_curve, 0.0), dt) / 1000; digits=1)) kWh cooling")
 
 # Isolates the effect of variable, temperature-dependent COP/CAP (method 3) against a fixed
 # nominal COP/CAP (method 2), both capacity-capped.
@@ -135,18 +138,17 @@ display(fig3)
 #     versa above average.
 #   - CAP varies with Tsrc: method 2's cap (n_HP * maximum(CAP_heat_vec)) is only reached at the
 #     single best grid point. The real, temperature-dependent capacity is lower everywhere else, so
-#     method 3 caps (and reports unmet load) earlier (compare the "Unmet hours"/"Unmet loads"
+#     method 3 caps (and reports unmet load) earlier (compare the "Unmet hours"/"Unmet energy"
 #     printed above for methods 2 and 3).
 
 # n_active_heat_pumps: staging/COP diagnostic on top of method 3
 
-Qb_hp_curve = Qb .- Qb_unmet_curve # [W] building load actually delivered by the heat pumps
 n_active, COP_actual = n_active_heat_pumps(Qb_hp_curve, Tsrc, n_HP, perf_heating, perf_cooling)
 
 println("Mean active heat pumps: $(round(sum(n_active) / length(n_active); digits=2)) / $n_HP")
 
 # Heat pump staging diagnostic on top of method 3: top panel is the fractional number of units
-# (0 to n_HP) needed to deliver Qb_hp_curve at each time step -- it tracks the building demand
+# (0 to n_HP) needed to deliver Qb_hp_curve at each time step. It tracks the building demand
 # shape, saturating at n_HP whenever load is capped; bottom panel is the actual COP achieved at
 # that time step's Tsrc, from the same interpolation.
 fig4 = Figure(size=(900, 450))

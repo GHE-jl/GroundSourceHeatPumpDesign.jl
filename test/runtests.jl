@@ -28,6 +28,18 @@ using GroundSourceHeatPumpDesign
         CAP_v, COP_v = heat_pump_performance([0.0, 2.5], Tsrc_grid, CAP_vec, COP_vec)
         @test CAP_v ≈ [9.0, 9.5]
         @test COP_v ≈ [3.4, 3.6]
+
+        # Integer source temperatures still give floating-point outputs
+        CAP_i, COP_i = heat_pump_performance([0, 5], Tsrc_grid, CAP_vec, COP_vec)
+        @test eltype(CAP_i) == Float64 && CAP_i ≈ [9.0, 10.0]
+
+        # Grid must be strictly increasing, with CAP/COP vectors matching its length
+        @test_throws ArgumentError heat_pump_performance([2.5], reverse(Tsrc_grid), CAP_vec,
+            COP_vec)
+        @test_throws ArgumentError heat_pump_performance(2.5, reverse(Tsrc_grid), CAP_vec, COP_vec)
+        @test_throws ArgumentError heat_pump_performance(2.5, [0.0], [9.0], [3.4])
+        @test_throws DimensionMismatch heat_pump_performance(2.5, Tsrc_grid, CAP_vec[1:3], COP_vec)
+        @test_throws DimensionMismatch heat_pump_performance(2.5, Tsrc_grid, CAP_vec, COP_vec[1:3])
     end
 
     @testset "heat_pump_performance — 2D" begin
@@ -52,6 +64,34 @@ using GroundSourceHeatPumpDesign
             CAP_table, COP_table)
         @test CAP_v[1] ≈ 8.0
         @test CAP_v[2] ≈ (8.0 + 6.0 + 10.0 + 8.0) / 4
+
+        # Integer inputs give floating-point outputs
+        CAP_v, COP_v = heat_pump_performance([0, 5], [30, 35], Tsrc_grid, Tload_grid, CAP_table,
+            COP_table)
+        @test eltype(CAP_v) == Float64 && eltype(COP_v) == Float64
+        @test CAP_v ≈ [8.0, 8.0]
+
+        # Mismatched Tsrc/Tload lengths
+        @test_throws DimensionMismatch heat_pump_performance([0.0, 5.0], [30.0], Tsrc_grid,
+            Tload_grid, CAP_table, COP_table)
+
+        # Table orientation: rows must follow Tsrc_grid, columns Tload_grid
+        Tload_grid3 = [30.0, 35.0, 40.0]
+        CAP_table3 = [8.0 7.0 6.0; 10.0 9.0 8.0] # 2 x 3, correct orientation
+        CAP, _ = heat_pump_performance(10.0, 35.0, Tsrc_grid, Tload_grid3, CAP_table3, CAP_table3)
+        @test CAP ≈ 9.0
+        @test_throws DimensionMismatch heat_pump_performance(5.0, 35.0, Tsrc_grid, Tload_grid3,
+            permutedims(CAP_table3), CAP_table3)
+        @test_throws DimensionMismatch heat_pump_performance(5.0, 35.0, Tsrc_grid, Tload_grid3,
+            CAP_table3, permutedims(CAP_table3))
+
+        # Grids must be strictly increasing, with at least two points
+        @test_throws ArgumentError heat_pump_performance(5.0, 35.0, [10.0, 0.0], Tload_grid,
+            CAP_table, COP_table)
+        @test_throws ArgumentError heat_pump_performance(5.0, 35.0, Tsrc_grid, [30.0, 30.0],
+            CAP_table, COP_table)
+        @test_throws ArgumentError heat_pump_performance(5.0, 35.0, [0.0], [30.0], fill(8.0, 1, 1),
+            fill(4.0, 1, 1))
     end
 
     @testset "ground_load — method 1 (fixed COP)" begin
@@ -84,9 +124,10 @@ using GroundSourceHeatPumpDesign
         @test Qb_unmet == 0.0
 
         # Above heating capacity: capped, with unmet remainder
-        Qg, Qb_unmet = ground_load(15.0, 4.0, 5.0, 10.0, 10.0)
+        Qg, Qb_unmet, Qb_hp = ground_load(15.0, 4.0, 5.0, 10.0, 10.0)
         @test Qg ≈ ground_load(10.0, 4.0, 5.0)
         @test Qb_unmet ≈ 5.0
+        @test Qb_hp ≈ 10.0
 
         # Above cooling capacity (Qb very negative): capped, with unmet remainder
         Qg, Qb_unmet = ground_load(-15.0, 4.0, 5.0, 10.0, 10.0)
@@ -95,15 +136,17 @@ using GroundSourceHeatPumpDesign
 
         # Vector overload
         Qb = [5.0, 15.0, -15.0]
-        Qg, Qb_unmet = ground_load(Qb, 4.0, 5.0, 10.0, 10.0)
+        Qg, Qb_unmet, Qb_hp = ground_load(Qb, 4.0, 5.0, 10.0, 10.0)
         @test Qg ≈ [ground_load(5.0, 4.0, 5.0), ground_load(10.0, 4.0, 5.0),
             ground_load(-10.0, 4.0, 5.0)]
         @test Qb_unmet ≈ [0.0, 5.0, -5.0]
+        @test Qb_hp ≈ [5.0, 10.0, -10.0]
 
         # n_HP scales the per-unit CAP to the total installed capacity: 3 units of CAP=10.0 behaves
         # like a single CAP_heating_unit/CAP_cooling_unit of 30.0 (n_HP=1)
         Qg3, Qb_unmet3 = ground_load(25.0, 4.0, 5.0, 10.0, 10.0; n_HP=3)
-        @test (Qg3, Qb_unmet3) == ground_load(25.0, 4.0, 5.0, 30.0, 30.0)
+        @test ground_load(25.0, 4.0, 5.0, 10.0, 10.0; n_HP=3) ==
+              ground_load(25.0, 4.0, 5.0, 30.0, 30.0)
         @test Qb_unmet3 == 0.0
         Qg3, Qb_unmet3 = ground_load(35.0, 4.0, 5.0, 10.0, 10.0; n_HP=3)
         @test Qg3 ≈ ground_load(30.0, 4.0, 5.0)
@@ -130,6 +173,34 @@ using GroundSourceHeatPumpDesign
         @test n ≈ [3.0]
 
         @test_throws DimensionMismatch n_active_heat_pumps([1.0, 2.0], [1.0], 3, perf, perf)
+    end
+
+    @testset "n_active_heat_pumps — fixed CAP/COP and 2D curves" begin
+        # Fixed capacity and COP of one unit
+        n, COP = n_active_heat_pumps([5.0, 20.0, -6.0, 0.0], 3, 10.0, 12.0, 4.0, 5.0)
+        @test n ≈ [0.5, 2.0, 0.5, 0.0]
+        @test COP ≈ [4.0, 4.0, 5.0, 4.0]
+        n, _ = n_active_heat_pumps([5.0], 3, Inf, Inf, 4.0, 5.0)    # uncapped
+        @test n == [0.0]
+
+        # 2D curves: same CAP/COP as the 2D heat_pump_performance overload
+        perf = ([0.0, 10.0], [30.0, 40.0], [8.0 6.0; 10.0 8.0], [4.0 3.0; 5.0 4.0])
+        n, COP = n_active_heat_pumps([4.5], [5.0], [35.0], 2, perf, perf)
+        CAP_ref, COP_ref = heat_pump_performance(5.0, 35.0, perf...)
+        @test n ≈ [4.5 / CAP_ref] && COP ≈ [COP_ref]
+        @test_throws DimensionMismatch n_active_heat_pumps([1.0, 2.0], [5.0], [35.0], 2, perf, perf)
+    end
+
+    @testset "part_load_COP" begin
+        Cd = 0.2
+        @test part_load_COP(4.0, 0.5, 0.0) == 4.0              # no degradation
+        @test part_load_COP(4.0, 2.0, Cd) == 4.0               # no unit cycling
+        @test part_load_COP(4.0, 0.5, Cd) ≈ 4.0 * (1 - Cd * 0.5)  # single unit: PLF·COP
+        PLF = 1 - Cd * (1 - 0.5)
+        @test part_load_COP(4.0, 2.5, Cd) ≈ 4.0 * 2.5 / (2 + 0.5 / PLF)
+        @test part_load_COP([4.0, 4.0], [0.5, 2.0], Cd) ≈ [4.0 * PLF, 4.0]
+        @test_throws ArgumentError part_load_COP(4.0, 0.5, 1.0)
+        @test_throws DimensionMismatch part_load_COP([4.0], [0.5, 1.0], Cd)
     end
 
     @testset "reporting utilities" begin
@@ -325,6 +396,210 @@ using GroundSourceHeatPumpDesign
             ΔT_high = abs.(res_high.T_in .- res_high.T_out)
             @test all(ΔT_high .<= ΔT_low .+ 1e-9)
             @test maximum(ΔT_high) < maximum(ΔT_low)
+
+            # The precomputed-outlet-response method reproduces the raw-input method
+            res_base = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, 1, res.h_out, cf,
+                ρf, V_candidates, ΔT_target, T0)
+            @test res_base.T_out ≈ res.T_out
+            @test_throws ArgumentError gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, 1,
+                res.h_out, cf, ρf, reverse(V_candidates), ΔT_target, T0)
         end
+
+        perf_heating = ([-5.0, 15.0], [10_000.0, 12_000.0], [3.5, 4.5])
+        perf_cooling = ([10.0, 35.0], [11_000.0, 13_000.0], [5.5, 4.0])
+        V_candidates = [0.25, 0.30, 0.35] ./ 1000
+
+        @testset "part-load degradation (Cd)" begin
+            res0 = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            res = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; Cd = 0.2)
+            @test res.COP_actual ≈ part_load_COP(res0.COP_actual, res0.n_active, 0.2)
+            @test all(res.COP_actual .< res0.COP_actual)        # every unit cycles here (n < 1)
+            # Lower COP: less heat extracted in heating, more heat rejected in cooling
+            heating = Qb .> 0
+            @test all(abs.(res.Qg[heating]) .< abs.(res0.Qg[heating]))
+            @test all(res.Qg[.!heating] .> res0.Qg[.!heating])
+        end
+
+        @testset "uncapped base case (CAP = Inf)" begin
+            res = gshp_simulation(t, 10 .* Qb, 4.0, 5.0, Inf, Inf, 1, xy, rb, H, D, ks, Cs, s, ro,
+                ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            @test all(res.Qb_unmet .== 0.0)
+            @test res.Qg ≈ ground_load(10 .* Qb, 4.0, 5.0)
+        end
+
+        @testset "borefield: same temperatures as one borehole for far-apart boreholes" begin
+            xy4 = [0.0 0.0; 1000.0 0.0; 0.0 1000.0; 1000.0 1000.0]
+            res1 = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            res4 = gshp_simulation(t, 4 .* Qb, 4.0, 5.0, 10_000.0, 12_000.0, 4, xy4, rb, H, D, ks,
+                Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            @test res4.T_out ≈ res1.T_out rtol = 1e-3
+            @test res4.T_in ≈ res1.T_in rtol = 1e-3
+        end
+
+        @testset "variable COP with 2D curves" begin
+            perf2_heating = ([-5.0, 15.0], [30.0, 50.0], [10_000.0 9_000.0; 12_000.0 11_000.0],
+                [3.5 3.0; 4.5 4.0])
+            perf2_cooling = ([10.0, 35.0], [5.0, 15.0], [11_000.0 12_000.0; 13_000.0 14_000.0],
+                [5.5 6.0; 4.0 4.5])
+            @test_throws ArgumentError gshp_simulation(t, Qb, perf2_heating, perf2_cooling, 1, xy,
+                rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            Tload = fill(40.0, nt)
+            res = gshp_simulation(t, Qb, perf2_heating, perf2_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; Tload)
+            @test res.converged
+            n_ref, COP_ref = n_active_heat_pumps(res.Qb_hp, res.T_out, Tload, 1, perf2_heating,
+                perf2_cooling)
+            @test res.COP_actual ≈ COP_ref rtol = 1e-2
+        end
+
+        @testset "source-side mitigation (case 4)" begin
+            res0 = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            for Tlim_at in (:inlet, :outlet, :mean)
+                w = Tlim_at === :inlet ? 1.0 : Tlim_at === :outlet ? 0.0 : 0.5
+                T0_at = w .* res0.T_in .+ (1 - w) .* res0.T_out
+                Tlim = [minimum(T0_at) + 0.5, maximum(T0_at) - 0.5]
+                res = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs,
+                    s, ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; Tlim, Tlim_at)
+                T = w .* res.T_in .+ (1 - w) .* res.T_out
+                @test all(Tlim[1] - 1e-6 .<= T .<= Tlim[2] + 1e-6)
+                @test res.Qg .+ res.Qs_unmet ≈ res0.Qg               # shaved part, same sign
+                @test all(res.Qs_unmet .* res0.Qg .>= 0.0)
+                @test any(res.Qs_unmet .!= 0.0)
+            end
+            # Same with the COP/CAP curves (case 2 with Tlim)
+            Tlim = [minimum(res0.T_in) + 0.5, maximum(res0.T_in) - 0.5]
+            res = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; Tlim)
+            @test all(Tlim[1] - 1e-6 .<= res.T_in .<= Tlim[2] + 1e-6)
+            @test res.converged
+        end
+
+        @testset "non-stationary flow with COP curves (case 3b) and limits (case 5)" begin
+            res = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s, ro,
+                ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0)
+            @test res.converged
+            @test all(v -> v in V_candidates, res.V_t)
+            @test all(res.Qs_unmet .== 0.0)
+
+            # A single candidate reduces to the stationary case 2
+            res_ns = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, [V], 4.0, T0)
+            res_s = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            @test res_ns.T_out ≈ res_s.T_out
+
+            # Case 5: largest flow rate within T_margin of the limits, temperatures within limits
+            Tlim = [minimum(res.T_in) + 1.0, maximum(res.T_in) - 1.0]
+            res5 = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0; Tlim, T_margin = 0.5)
+            @test res5.converged
+            @test all(Tlim[1] - 1e-6 .<= res5.T_in .<= Tlim[2] + 1e-6)
+            near = (res5.T_in .< Tlim[1] + 0.5) .| (res5.T_in .> Tlim[2] - 0.5)
+            @test any(near) && any(res5.V_t[near] .== V_candidates[end])
+
+            # Same with fixed COP/CAP (case 3 with Tlim)
+            res5f = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0; Tlim)
+            @test all(Tlim[1] - 1e-6 .<= res5f.T_in .<= Tlim[2] + 1e-6)
+        end
+
+        @testset "outlet transfer function per flow rate" begin
+            @test_throws ArgumentError gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy,
+                rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0;
+                outlet_model = :transfer_function)
+            res_r = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0)
+            res_t = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0;
+                outlet_model = :transfer_function, Cg = 2.2e6)
+            @test size(res_t.h_out) == size(res_r.h_out)
+            @test all(isfinite, res_t.T_out)
+            # Short-term fluid transit: the outlet reacts more slowly than with Rbe(V) only
+            @test all(res_t.h_out[1, :] .< res_r.h_out[1, :])
+            # The Rb* recalculation needs the resistance outlet model
+            @test_throws ArgumentError gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy,
+                rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0;
+                outlet_model = :transfer_function, Cg = 2.2e6, fluid = (:water, 100))
+        end
+
+        @testset "Rb* recalculated at the fluid temperature (fluid keyword)" begin
+            # Fluid properties given at T0: the first pass is the run without `fluid`
+            res0 = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            res1 = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; fluid = (:water, 100))
+            @test res0.n_iter_fluid == 1
+            @test 1 < res1.n_iter_fluid <= 5
+            @test res1.T_in != res0.T_in
+            @test maximum(abs.(res1.T_in .- res0.T_in)) < 1.0
+
+            # Zero change of resistance: same result as without it
+            g, Rbe = res0.g, res0.Rbe
+            res_z = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, 1, H, g, Rbe, cf, ρf, V,
+                T0; ΔR = zeros(length(t)))
+            @test res_z.T_in ≈ res0.T_in
+
+            # Every case runs with `fluid` and converges
+            res2 = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; fluid = (:water, 100))
+            res5 = gshp_simulation(t, Qb, perf_heating, perf_cooling, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0; fluid = (:water, 100),
+                Tlim = [res0.T_in[argmin(res0.T_in)] + 0.5, 100.0])
+            @test res2.n_iter_fluid <= 5 && res5.n_iter_fluid <= 5
+            @test all(res5.T_in .>= res0.T_in[argmin(res0.T_in)] + 0.5 - 1e-6)
+        end
+
+        @testset "pumping power" begin
+            # Darcy-Weisbach, laminar flow: f = 64/Re
+            V1, ri1, ρ1, μ1 = 1e-5, 0.017, 1000.0, 1e-3
+            v1 = V1 / (π * ri1^2)
+            Re1 = 2 * ri1 * ρ1 * v1 / μ1
+            ΔP1 = (64 / Re1 * 2 * 100.0 / (2 * ri1) + 3.3) * ρ1 * v1^2 / 2
+            @test pumping_power(V1, 4, 100.0, ri1, ρ1, μ1) ≈ ΔP1 * 4 * V1 / 0.5
+            @test pumping_power(V1, 4, 100.0, ri1, ρ1, μ1; η = 1.0, K = 0.0) ≈
+                64 / Re1 * 200.0 / (2 * ri1) * ρ1 * v1^2 / 2 * 4 * V1
+            # Pumping power returned by the simulation, zero when the heat pumps are off
+            res = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
+                ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
+            @test all(res.P_pump[res.Qb_hp .== 0] .== 0)
+            @test all(res.P_pump[res.Qb_hp .!= 0] .≈ pumping_power(V, size(xy, 1), H, ri, ρf, μf))
+        end
+    end
+
+    @testset "report_gshp_simulation" begin
+        T_in = [0.0, 2.0, 31.0, 5.0]
+        T_out = [1.0, 3.0, 29.0, 6.0]
+        Q = [1.0, -1.0, 2.0, -2.0]
+        out = mktemp() do path, io
+            redirect_stdout(io) do
+                report_gshp_simulation(T_in, T_out, Q, Q, 0 .* Q, Q, [0.5, 30.0], 2;
+                    Tlim_at = :outlet, Qs_unmet = Q)
+            end
+            flush(io)
+            read(path, String)
+        end
+        @test occursin("Source auxiliary heating", out)
+        @test occursin("imbalance", out)
+
+        # Method with the simulation output: electricity and seasonal performance factors
+        res = (; T_in, T_out, Qb_hp = Q, Qb_unmet = 0 .* Q, Qg = Q, Qs_unmet = 0 .* Q,
+            COP_actual = fill(4.0, 4), P_pump = fill(0.5, 4))
+        out = mktemp() do path, io
+            redirect_stdout(io) do
+                report_gshp_simulation(res, Q, [0.5, 30.0], 2)
+            end
+            flush(io)
+            read(path, String)
+        end
+        @test occursin("Heat pump electricity", out) && occursin("Pumping electricity", out)
+        @test !occursin("Source auxiliary", out)
+        @test occursin("heat pumps: 4.0", out)
+        @test occursin("heat pumps and pumping: 1.71", out)
+        @test_throws ArgumentError report_gshp_simulation(T_in, T_out, Q, Q, Q, Q, [0.5, 30.0], 2;
+            Tlim_at = :eft)
     end
 end

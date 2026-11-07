@@ -51,15 +51,15 @@ kg, kp = 1.6, 0.4 # grout, pipe thermal conductivity [W/mK]
 kf, cf, ρf, μf = fluid_property(T0, :water)
 V = 0.5 / 1000 # flow rate per borehole [m3/s]
 
-# Operating temperature limits, checked against T_out (EWT_s, entering the heat pumps)
+# Operating temperature limits, checked at the ground inlet T_in (`Tlim_at = :inlet` by default,
+# the heat-pump LFT; seen from the ground)
 Tlim = [1.0, 30.0] # degC
 
 res = gshp_simulation(t, Qb, perf_heating, perf_cooling, n_HP, xy, rb, H, D, ks, Cs, s, ro, ri,
     kg, kp, kf, cf, ρf, μf, V, T0)
 
 # Table: temperatures, unmet hours and energy/power for the last simulated year
-report_gshp_simulation(res.T_in, res.T_out, Qb, res.Qb_hp, res.Qb_unmet, res.Qg, Tlim,
-    steps_per_year)
+report_gshp_simulation(res, Qb, Tlim, steps_per_year)
 
 # Figures
 years = t_h ./ steps_per_year

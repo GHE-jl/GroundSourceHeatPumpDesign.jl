@@ -87,6 +87,20 @@ pump typically cycles on and off rather than switching exactly on the step bound
 fraction of the step it spends running is a better estimate of its duty than rounding `n(t)` up or
 down would be.
 
+## Part-load degradation
+
+The fractional unit of `n(t)` cycles on and off within the time step, and its COP is lower than at
+steady state. With the part-load ratio `PLR = n - ⌊n⌋` and a degradation coefficient `C_d`,
+[`part_load_COP`](@ref) gives the effective COP of the `n` running units:
+
+```math
+\mathrm{PLF} = 1 - C_d\,(1 - \mathrm{PLR}), \qquad
+\mathrm{COP}_{eff} = \mathrm{COP}\,\frac{n}{\lfloor n \rfloor + \mathrm{PLR}/\mathrm{PLF}}
+```
+
+The `⌊n⌋` units at full load keep their COP, and only the cycling one is degraded. With `C_d = 0`
+(the default of every [`gshp_simulation`](@ref) case), `COP_eff = COP`.
+
 ## GSHP simulation, without a full outer iteration
 
 Simulating the ground temperature needs the ground load, which itself depends on the source EFT
@@ -107,6 +121,66 @@ it can, rather than iterating the whole pipeline:
   source EFT every pass). [`n_active_heat_pumps`](@ref) then reports the number of units operating
   and the COP actually achieved at that converged EFT, self-consistently.
 - With a **non-stationary** flow rate (case 3), the active flow rate at each time step is picked
-  from the ground load alone, never from the simulated temperature, so it stays a single pass.
+  from the ground load alone, never from the simulated temperature, so it stays a single pass. With
+  the COP/CAP curves (case 3b), the same fixed-point loop as case 2 is used; after the first
+  iteration, a flow rate can only increase, so that the switching between the discrete flow rates
+  does not prevent the convergence.
 
-See the README's "Simulation cases" section for which cases are implemented and which are planned.
+The fluid temperatures come from the ground temperature at the borehole wall and the effective
+borehole resistance (or, for the non-stationary cases, from the outlet response of each flow rate):
+
+```math
+T_{out} = T_0 + Q_g * h_{out}, \qquad T_{in} = T_{out} + \frac{Q_g}{n_b \dot V \rho_f c_f}
+```
+
+with `*` the temporal superposition and, for `outlet_model = :resistance`,
+`h_out = (Rb* + g) / (n_b H) - 1 / (2 n_b V̇ ρ_f c_f)`.
+
+## Source-side mitigation
+
+With operating limits `Tlim` (cases 4 and 5), the temperature at `Tlim_at` (seen from the ground:
+`:inlet` = `T_in`, the default; `:outlet` = `T_out`; `:mean`) is computed, and at the time steps
+where it leaves the limits the ground load is corrected following Pasquier et al. (2013):
+
+```math
+\Delta Q_g(t) = \frac{T_{lim} - T(t)}{a}, \qquad
+a = \frac{R_b^* + g(\Delta t)}{n_b H} + \frac{w - 1/2}{n_b \dot V \rho_f c_f}
+```
+
+where `a` is the temperature response to a unit load over one time step, and `w = 1, 0, 1/2` for
+`:inlet`, `:outlet`, `:mean`. The correction only shaves the load toward zero (never reverses it).
+Since the later time steps feel the corrected load, the temperature is recomputed and the
+correction repeated until the temperature sits on the limit, which takes a few passes. The shaved
+part `Qs_unmet = Qg_hp - Qg` must be covered on the source side (e.g. a boiler or a dry cooler).
+
+In case 5, before the mitigation, the largest flow rate is forced at the time steps where the
+temperature is within `T_margin` of the limits (as in `fNSCiter.m`): the bigger flow rate reduces
+the `T_in`/`T_out` split, so that less load has to be shaved.
+
+## Effective borehole resistance at the fluid temperature
+
+With the `fluid` keyword, the fluid properties and `Rb*` are recalculated at the mean fluid
+temperature `T_f = (T_in + T_out)/2` of the previous pass. Since `Rb*` only enters the fluid
+temperature instantaneously, its change is added as a resistance at each time step:
+
+```math
+T_f(t) = T_0 + Q_g * \frac{R_b^*(T_0) + g}{n_b H} + Q_g(t)\,\frac{R_b^*(T_f(t)) - R_b^*(T_0)}{n_b H}
+```
+
+and the simulation is repeated until `T_f` changes by less than `tol` (a few passes). For the
+non-stationary flow, the same holds with `Rb*` of the active flow rate.
+
+## Pumping power and performance indicators
+
+[`pumping_power`](@ref) gives the pressure drop of one U-loop by the Darcy-Weisbach equation, with
+the minor losses of one 180° bend and two 90° elbows (`K = 1.5 + 2 × 0.9`):
+
+```math
+\Delta P = \left(f\,\frac{2H}{2 r_i} + K\right)\frac{\rho_f v^2}{2}, \qquad
+P_{pump} = \frac{\Delta P\, n_b \dot V}{\eta}
+```
+
+[`report_gshp_simulation`](@ref) then gives the electricity of the heat pumps
+`W_hp = |Q_{b,hp}| / COP`, the seasonal performance factors `SPF_hp = Σ|Q_{b,hp}| / ΣW_hp` and
+`SPF_sys = Σ|Q_{b,hp}| / Σ(W_hp + P_pump)`, and the annual ground load imbalance `ΣQ_g / n_years`
+(positive when more heat is rejected than extracted).

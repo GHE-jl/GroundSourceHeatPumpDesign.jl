@@ -58,8 +58,8 @@ reports the unmet remainder alongside `Qg`. These are the capacity of *one* heat
 optional `n_HP` keyword (default `1`) scales them to the total installed capacity:
 
 ```julia
-Qg, Qb_unmet = ground_load(Qb, 4.0, 5.0, 10.0, 10.0)          # 1 unit, CAP = 10.0 kW
-Qg, Qb_unmet = ground_load(Qb, 4.0, 5.0, 10.0, 10.0; n_HP=5)  # 5 units, CAP = 50.0 kW total
+Qg, Qb_unmet, Qb_hp = ground_load(Qb, 4.0, 5.0, 10.0, 10.0)          # 1 unit, CAP = 10.0 kW
+Qg, Qb_unmet, Qb_hp = ground_load(Qb, 4.0, 5.0, 10.0, 10.0; n_HP=5)  # 5 units, CAP = 50.0 kW total
 ```
 
 Replacing the fixed COP with `Tsrc` (and, for the 2D case, `Tload`) plus performance-curve tuples
@@ -71,7 +71,7 @@ left unmet:
 perf_heating = (Tsrc_grid, Tload_grid, CAP_table, COP_table)
 perf_cooling = (Tsrc_grid, Tload_grid, CAP_table, COP_table)
 
-Qg, Qb_unmet = ground_load(8.0, 7.5, 35.0, perf_heating, perf_cooling; n_HP=5)
+Qg, Qb_unmet, Qb_hp = ground_load(8.0, 7.5, 35.0, perf_heating, perf_cooling; n_HP=5)
 ```
 
 All of the above also accept vectors (`Qb`, and `Tsrc`/`Tload` where applicable) for a time series.
@@ -108,8 +108,13 @@ resolution as small and local as it can:
   is *not* a full outer iteration over building-load-conversion, staging, etc.: only the
   Qg-EFT-COP link is resolved.
 - **Case 3** (non-stationary flow): the active flow rate at each time step is picked from the
-  ground load alone (never from the simulated temperature), so it stays a genuine single pass —
-  see the README's "Simulation cases" section.
+  ground load alone (never from the simulated temperature), so it stays a genuine single pass.
+  Case 3b adds case 2's COP/CAP curves.
+- **Case 4** (source-side mitigation): any case with `Tlim`, the ground load is shaved where the
+  fluid would leave the limits (a few correction passes, not a full outer iteration).
+- **Case 5**: case 3b with `Tlim`, the largest flow rate near the limits, then the mitigation.
+
+See the README's "Simulation cases" section for the details.
 
 [`gshp_simulation`](@ref) runs the whole pipeline — building load to ground load (capped at the
 installed capacity), then the ground response (g-function, effective borehole resistance, and
@@ -143,8 +148,36 @@ res = gshp_simulation(t, Qb, perf_heating, perf_cooling, n_HP,
     xy, rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V, T0)
 ```
 
-`res` is a named tuple (`Qg`, `Qb_hp`, `Qb_unmet`, `T_in`, `T_out`, `n_active`, `Rbe`, `g`, plus
-`COP_actual`/`n_iter` for case 2). [`unmet_hours`](@ref), [`annual_drift`](@ref) and
-[`thermal_energy`](@ref) then summarize the operating-temperature-limit exceedances, long-term
-ground temperature drift, and
-energy/peak-power use for a final report, as in the two scripts above.
+Case 4, operating limits with source-side mitigation — see `script/script_gshp_4_mitigation.jl`.
+The limits are checked at the ground inlet `T_in` by default (`Tlim_at = :inlet`, the heat-pump
+LFT), and the shaved ground load is returned as `res.Qs_unmet`:
+
+```julia
+res = gshp_simulation(t, Qb, 3.8, 4.7, 12_000.0, 13_000.0, n_HP,
+    xy, rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V, T0; Tlim = [1.0, 30.0])
+```
+
+Case 5, everything together — see `script/script_gshp_5_all.jl`. The flow rate per borehole is
+picked among `V_candidates` to target `ΔT_target` between the inlet and outlet, and `Cd` adds the
+part-load degradation:
+
+```julia
+V_candidates = [25.0, 30.0, 35.0] ./ 60_000 # m3/s per borehole
+res = gshp_simulation(t, Qb, perf_heating, perf_cooling, n_HP,
+    xy, rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 2.5, T0;
+    Cd = 0.15, Tlim = [1.0, 30.0], T_margin = 1.0)
+```
+
+Adding `fluid = (:water, 100)` (or e.g. `(:MPG, 20)`) recalculates the effective borehole
+resistance at the mean fluid temperature, as in `script/script_gshp_5_all.jl`.
+
+`res` is a named tuple (`Qg`, `Qb_hp`, `Qb_unmet`, `Qs_unmet`, `T_in`, `T_out`, `n_active`,
+`COP_actual`, `Rbe`, `g`, `P_pump`, `n_iter_fluid`, plus `n_iter`/`converged` for the curve-based
+cases and `V_t`/`h_out` for the non-stationary ones). [`report_gshp_simulation`](@ref) then
+summarizes the operating-temperature-limit exceedances, long-term ground temperature drift,
+energy/peak-power use, electricity, ground load imbalance and seasonal performance factors, as in
+the scripts above:
+
+```julia
+report_gshp_simulation(res, Qb, [1.0, 30.0], 8760)
+```

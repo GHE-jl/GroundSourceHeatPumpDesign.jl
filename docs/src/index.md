@@ -14,7 +14,8 @@ physics. Its own heat pump/load layer has no ground-physics dependency and can b
 
 !!! note "Early / in-development package"
     This package is at an early stage: it currently provides heat pump performance interpolation,
-    building-to-ground load conversion and a minimal, non-iterative GSHP simulation workflow.
+    building-to-ground load conversion and a GSHP simulation workflow without a full outer
+    iteration.
     Expect the public API to change without notice until the package reaches a tagged release.
 
 ## What it does today
@@ -29,12 +30,15 @@ physics. Its own heat pump/load layer has no ground-physics dependency and can b
   cooling load rejects heat to it. One function name with methods of increasing complexity: fixed
   COP, fixed COP with capacity capping, and performance-curve-based (temperature-dependent CAP/COP,
   capacity-capped).
-- **[`gshp_simulation`](@ref)** — a full, single-pass GSHP simulation combining the above with
+- **[`gshp_simulation`](@ref)** — a GSHP simulation combining the above with
   [`GroundHeatExchanger.jl`](https://github.com/GHE-jl/GroundHeatExchanger.jl)'s g-function and
-  effective borehole resistance, plus [`n_active_heat_pumps`](@ref), [`unmet_hours`](@ref),
-  [`annual_drift`](@ref) and [`thermal_energy`](@ref) for reporting. Implemented as multiple
-  methods of increasing complexity — see `script/script_gshp_1_fixedCOP.jl` and
-  `script/script_gshp_2_variableCOP.jl`, and the [Conventions](https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl#conventions)
+  effective borehole resistance: fixed or curve-based COP/CAP, part-load degradation, constant or
+  non-stationary flow rate, source-side mitigation to respect the operating limits, and effective
+  borehole resistance at the fluid temperature. Plus [`n_active_heat_pumps`](@ref),
+  [`part_load_COP`](@ref), [`pumping_power`](@ref), [`unmet_hours`](@ref), [`annual_drift`](@ref),
+  [`thermal_energy`](@ref) and [`report_gshp_simulation`](@ref) (electricity, ground load
+  imbalance and seasonal performance factors) for reporting. Implemented as multiple methods of
+  increasing complexity — see the `script/script_gshp_*.jl` examples, and the [Conventions](https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl#conventions)
   section of the README for the sign convention and nomenclature used throughout.
 
 ## Where to next

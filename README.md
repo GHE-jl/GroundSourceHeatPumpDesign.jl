@@ -29,7 +29,7 @@ perf_cooling = (Tsrc_grid_cool, CAP_cool_vec, COP_cool_vec)
 Qb, Tsrc = 8000.0, 7.5   # 8 kW building heating load, 7.5°C source EFT
 
 # Ground load, temperature-dependent COP/CAP, capacity-capped
-Qg, Qb_unmet = ground_load(Qb, Tsrc, perf_heating, perf_cooling)
+Qg, Qb_unmet, Qb_hp = ground_load(Qb, Tsrc, perf_heating, perf_cooling)
 ```
 
 ## What it does
@@ -47,11 +47,12 @@ Qg, Qb_unmet = ground_load(Qb, Tsrc, perf_heating, perf_cooling)
 - **`gshp_simulation`**: A minimal ground source heat pump (GSHP) simulation combining the load-conversion
   tools above with `GroundHeatExchanger.jl`'s g-function, effective borehole resistance and
   temporal superposition. Each case resolves the load/temperature circularity as locally as it can
-  rather than iterating the whole pipeline — cases 1 and 3 are a single pass, case 2 is a small,
-  quickly-converging fixed-point loop over the source EFT-dependent COP (see "Simulation cases"
-  below). There is no load shaving or optimization yet — any load beyond the installed heat pump
-  capacity is simply reported as unmet, to be covered by an auxiliary system. Implemented as
-  multiple methods, in increasing order of complexity — see the "Simulation cases" section below.
+  rather than iterating the whole pipeline — cases 1 and 3 are a single pass, cases 2 and 5 are a
+  small, quickly-converging fixed-point loop over the source EFT-dependent COP (see "Simulation
+  cases" below). Any load beyond the installed heat pump capacity is reported as unmet
+  (`Qb_unmet`), to be covered by an auxiliary system. With operating limits `Tlim`, the ground load
+  is also shaved so that the fluid stays within them, and the shaved part is reported as
+  `Qs_unmet`.
 
 See the [documentation](https://GHE-jl.github.io/GroundSourceHeatPumpDesign.jl) for a tutorial and
 the full API reference.
@@ -70,6 +71,8 @@ julia --project=script/ -e 'using Pkg; Pkg.develop(path="."); Pkg.instantiate()'
 | `script_gshp_1_fixedCOP.jl` | Full GSHP simulation, case 1: fixed COP/CAP, stationary ground response |
 | `script_gshp_2_variableCOP.jl` | Full GSHP simulation, case 2: temperature-dependent COP/CAP curves, stationary ground response |
 | `script_gshp_3_nonstationaryFlow.jl` | Full GSHP simulation, case 3: fixed COP/CAP, non-stationary (load-based, discrete) flow rate, compared against the stationary case 1 |
+| `script_gshp_4_mitigation.jl` | Full GSHP simulation, case 4: source-side mitigation to respect the operating limits, compared against case 1 |
+| `script_gshp_5_all.jl` | Full GSHP simulation, case 5: COP/CAP curves with part-load degradation, non-stationary flow rate, flow override near the limits and mitigation, compared against case 2 |
 
 ## Simulation cases
 
@@ -96,18 +99,44 @@ computes them once, and delegates to the first. Implemented so far:
    per-borehole flow rates instead of a single constant `V`, via `GroundHeatExchanger.jl`'s
    `convolution_ns` state-vector machinery. The active flow rate at each time step is picked from
    the ground load alone (never from the simulated temperature — see `_flow_rate_states`), so this
-   stays a single, non-iterative pass. A bigger flow rate always shrinks the `T_in`/`T_out` split for
-   the same load; whether that also lowers a given `T_out` extreme depends on the load's sign there
-   too (see the script for a worked comparison against the stationary case).
+   stays a single, non-iterative pass. A bigger flow rate always shrinks the `T_in`/`T_out` split
+   for the same load; whether that also lowers a given `T_out` extreme depends on the load's sign
+   there too (see the script for a worked comparison against the stationary case). Case 3b combines
+   it with case 2's COP/CAP curves (same fixed-point loop).
+4. **Source-side mitigation** (`script_gshp_4_mitigation.jl`) — any of the cases above with the
+   `Tlim = [Tlim_low, Tlim_high]` keyword. At the time steps where the fluid would leave the limits,
+   the ground load is shaved toward zero with the correction scheme of Pasquier et al. (2013),
+   `ΔQg = (Tlim - T) / a`, with `a` the temperature response to a unit load over one time step. It
+   is repeated until the temperature sits on the limit (no full outer iteration). The shaved part
+   `Qs_unmet = Qg_hp - Qg` must be covered by a source-side auxiliary system. The limits are checked
+   at `Tlim_at = :inlet` (default, `T_in`), `:outlet` (`T_out`) or `:mean`.
+5. **All together** (`script_gshp_5_all.jl`) — case 3b with `Tlim`. Before the mitigation, the
+   largest flow rate is forced at the time steps where the fluid is within `T_margin` of the limits
+   (as in `fNSCiter.m`), so that the flow is used before the load is shaved.
 
-Planned, not yet implemented:
+Options common to every case:
 
-4. **Source-side load shaving** (either COP style, stationary or non-stationary flow) — cap `Qg`
-   further so the source EFT stays within the heat pumps' operating limits, along the lines of the
-   correction scheme in Pasquier et al. (2013); needs a couple of extra `fluid_temperature` passes
-   but still no full outer iteration.
-5. **Non-stationary flow, variable COP** — case 3 combined with case 2's temperature-dependent
-   COP/CAP curves.
+- `Cd` — part-load degradation coefficient (default `0`, none). The fractional unit of the staging
+  count cycles on and off, which lowers its COP: `PLF = 1 - Cd (1 - PLR)`, see `part_load_COP`.
+  With `Cd > 0`, the degraded COP is used in the building-to-ground conversion.
+- `outlet_model` (non-stationary flow) — `:resistance` (default, outlet response from the effective
+  borehole resistance of each flow rate) or `:transfer_function` (outlet transfer function of each
+  flow rate, Beaudry et al. 2024; needs the grout heat capacity `Cg`).
+- `fluid` (raw-input methods) — e.g. `(:MPG, 20)`. The fluid properties and the effective borehole
+  resistance `Rb*` are recalculated at the mean fluid temperature of the previous pass, and the
+  simulation is repeated until that temperature stops moving (typically 3 passes). Near 0 °C with
+  a glycol mix, the viscosity increases markedly and the flow can become laminar, raising `Rb*`. The
+  fluid heat capacity of the inlet/outlet split stays at the given value. With
+  `outlet_model = :resistance` only.
+- `η_pump` (raw-input methods) — pump efficiency of the pumping power `P_pump` (default `0.5`), see
+  `pumping_power`: Darcy-Weisbach pressure drop over the U-loop (`2H`), plus one 180° bend and two
+  90° elbows per U-loop, for all the boreholes in parallel. It is zero when the heat pumps are off.
+
+`report_gshp_simulation(res, Qb, Tlim, steps_per_year)` reports every case from the output of
+`gshp_simulation`: temperatures and hours outside the limits, energy and peak power of the
+building, heat pumps, auxiliary systems and ground, the electricity of the heat pumps
+(`|Qb_hp| / COP_actual`) and of the pump, the annual ground load imbalance, and the seasonal
+performance factors of the heat pumps and of the heat pumps with the pumping.
 
 ## Conventions
 
@@ -121,7 +150,9 @@ Planned, not yet implemented:
     heat pump's leaving load-side temperature is the the building entry temperature, and vice versa.
   - Source side (Evaporator of heat pump -> ground): `LWT_s = EWT_g = T_in` and `EWT_s = LWT_g = T_out`
     (`s` for source at the evaporator, `g` for ground). The fluid leaving the heat pump's source side is the entering GHE (`T_in`), and vice-versa. This package considers a 100% efficiency if a secondary heat exchanger is present in the ground loop.
-  - The heat pump's operating temperature limits are checked against `EWT_s` (`T_out`), matching the `Tsrc` grid that indexes `heat_pump_performance`.
+  - The COP/CAP curves are indexed by `EWT_s` (`T_out`). The operating temperature limits are
+    checked, seen from the ground, at `Tlim_at = :inlet` (default, `T_in = LWT_s`), `:outlet`
+    (`T_out = EWT_s`) or `:mean`.
 - **Auxiliary vs. mitigation**: "Auxiliary" is unmet **building**-side demand covered by a separate
   system (boiler, electric resistance, cooling tower, air-source heat pump, etc.). The function `ground_load` gives the `Qb_unmet` vector. "Mitigation" is a **source**-side correction applied to keep
   the source fluid within the heat pump's operating envelope. It gives the `Qs_unmet` vector that must be covered by a separate system on the source side (typically a boiler).
@@ -154,12 +185,13 @@ Pkg.add(url = "https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl")
 - Pasquier, P., Marcotte, D., Bernier, M., & Kummert, M. (2013). Simulation of ground-coupled heat
   pump systems using a spectral approach. *Proceedings of BS2013*, 2691–2698.
   Source of the fractional, time-averaged heat pump staging count used by `n_active_heat_pumps`,
-  and the correction scheme planned for source-side load shaving (case 4 above).
+  and the correction scheme used for source-side mitigation (case 4 above).
 - Beaudry, G., Pasquier, P., & Nguyen, A. (2024). New formulations and experimental validation of
   non-stationary convolutions for the fast simulation of time-variant flowrates in ground heat
   exchangers. *Science and Technology for the Built Environment*, 30(3), 208–219.
   <https://doi.org/10.1080/23744731.2023.2279468>
-  Non-stationary (state-vector) convolution used by the case 3 (non-stationary flow) method.
+  Non-stationary (state-vector) convolution and outlet transfer function used by the non-stationary
+  flow cases (3, 3b and 5).
 - Bernier, M. A., Pinel, P., Labib, R., & Paillot, R. (2004). A Multiple Load Aggregation Algorithm
   for Annual Hourly Simulations of GCHP Systems. *HVAC&R Research*, 10(4), 471–487.
   <https://doi.org/10.1080/10789669.2004.10391115>

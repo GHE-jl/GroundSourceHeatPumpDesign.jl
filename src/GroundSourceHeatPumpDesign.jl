@@ -6,13 +6,13 @@ include("reporting.jl")
 include("gshp_simulation.jl")
 
 # Functions from heat_pump.jl
-export heat_pump_performance
+export heat_pump_performance, part_load_COP
 
 # Functions from thermal_loads.jl
 export ground_load, n_active_heat_pumps
 
 # Functions from reporting.jl
-export unmet_hours, annual_drift, thermal_energy, report_gshp_simulation
+export unmet_hours, annual_drift, thermal_energy, report_gshp_simulation, pumping_power
 
 # Functions from gshp_simulation.jl
 export gshp_simulation

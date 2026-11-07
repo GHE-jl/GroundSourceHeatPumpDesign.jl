@@ -63,8 +63,8 @@ V_candidates = [25.0, 30.0, 35.0] ./ 60_000 # 25/30/35 L/min per borehole -> m3/
 V_nominal = V_candidates[2] # middle candidate, used for the stationary comparison run
 ΔT_target = 2.5 # K, field inlet/outlet split targeted when picking the active flow rate
 
-# Operating temperature limits, checked against T_out (EWT_s, entering the heat pumps) -- reporting
-# only: neither run below enforces this, `unmet_hours` is just applied to the raw T_out afterwards.
+# Operating temperature limits, checked at the ground inlet T_in (`Tlim_at = :inlet` by default, the
+# heat-pump LFT; seen from the ground) -- reporting only: neither run below enforces them.
 Tlim = [1.0, 30.0] # degC
 
 res_stationary = gshp_simulation(t, Qb, COP_heating, COP_cooling, CAP_heating_unit,
@@ -73,18 +73,15 @@ res_stationary = gshp_simulation(t, Qb, COP_heating, COP_cooling, CAP_heating_un
 res_ns = gshp_simulation(t, Qb, COP_heating, COP_cooling, CAP_heating_unit, CAP_cooling_unit, n_HP,
     xy, rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, ΔT_target, T0)
 
-# Table: temperatures and unmet hours for the last simulated year, stationary vs. non-stationary
+# Tables: temperatures, unmet hours and energy/power, stationary vs. non-stationary
 last_year = (nt - steps_per_year + 1):nt
 println("Flow-rate candidates [L/min]: ", round.(V_candidates .* 60_000, digits=1),
     " (stationary run held at $(round(V_nominal * 60_000, digits=1)) L/min)")
 for (name, res) in ("stationary" => res_stationary, "non-stationary" => res_ns)
-    ΔT = abs.(res.T_in[last_year] .- res.T_out[last_year])
     println("\n$name:")
-    println("  T_out min/max = $(round(minimum(res.T_out[last_year]); digits=2)) / " *
-        "$(round(maximum(res.T_out[last_year]); digits=2)) degC")
-    println("  |T_in - T_out| max = $(round(maximum(ΔT); digits=2)) degC")
-    println("  Hours with T_out outside [$(Tlim[1]), $(Tlim[2])] degC: " *
-        "$(unmet_hours(res.T_out[last_year], Tlim))")
+    report_gshp_simulation(res, Qb, Tlim, steps_per_year)
+    ΔT = abs.(res.T_in[last_year] .- res.T_out[last_year])
+    println("|T_in - T_out| max, last year = $(round(maximum(ΔT); digits=2)) degC")
 end
 println("\nThe inlet/outlet split shrinks with the non-stationary run (guaranteed, it's the flow-rate " *
     "control law's whole point). Whether the heating-season T_out minimum rises and/or the " *

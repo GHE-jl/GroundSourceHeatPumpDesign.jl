@@ -198,26 +198,32 @@ function ground_load(Qb::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
 end
 
 """
+    n_active_heat_pumps(Qb_hp, n_HP, CAP_heating, CAP_cooling, COP_heating, COP_cooling)
     n_active_heat_pumps(Qb_hp, Tsrc, n_HP, perf_heating, perf_cooling)
-    #TODO add 2D overload
+    n_active_heat_pumps(Qb_hp, Tsrc, Tload, n_HP, perf_heating, perf_cooling)
 
-Number of heat pumps operating at each time step to deliver `Qb_hp`, given the source EFT `Tsrc`
-(e.g. from a ground temperature simulation) and a single unit's performance curve. Following
+Number of heat pumps operating at each time step to deliver `Qb_hp`, given a single unit's fixed
+capacity and COP, or its performance curve evaluated at the source EFT `Tsrc` (1D) or at `Tsrc` and
+the load EFT `Tload` (2D) (e.g. from a ground temperature simulation). Following
 Pasquier et al. (2013), this is a fractional, time-averaged count (between `0` and `n_HP`) rather
 than an integer, since a heat pump typically cycles within a time step instead of switching exactly
 on its boundary.
 # Arguments
     - `Qb_hp`: Building load actually delivered by the heat pumps, post-capacity-capping (the
         third output of [`ground_load`](@ref), methods 2-3) [W]
-    - `Tsrc`: Source entering fluid temperature (EFT) [°C]
+    - `Tsrc`, `Tload`: Source/load entering fluid temperature (EFT) [°C]
     - `n_HP`: Number of installed heat pumps
+    - `CAP_heating`, `CAP_cooling`: Fixed heating/cooling capacity of one heat pump unit [W]
+    - `COP_heating`, `COP_cooling`: Fixed heating/cooling COP [-]
     - `perf_heating`: Single heat pump's heating performance data, forwarded to
-        [`heat_pump_performance`](@ref) (`(Tsrc_grid, CAP_vec, COP_vec)`)
+        [`heat_pump_performance`](@ref) (`(Tsrc_grid, CAP_vec, COP_vec)` or
+        `(Tsrc_grid, Tload_grid, CAP_table, COP_table)`)
     - `perf_cooling`: Single heat pump's cooling performance data, forwarded to
         [`heat_pump_performance`](@ref)
 # Output
     - `n`: Fractional number of heat pumps operating, in `[0, n_HP]`
-    - `COP`: Coefficient of performance at each time step, from the same interpolation as `n`
+    - `COP`: Full-load coefficient of performance at each time step (the fixed value, or the
+        same interpolation as `n`); see [`part_load_COP`](@ref) for the part-load degradation
 # Reference
     - Pasquier, P., Marcotte, D., Bernier, M., & Kummert, M. (2013). Simulation of ground-coupled
         heat pump systems using a spectral approach. Proceedings of BS2013, 2691–2698.
@@ -238,6 +244,40 @@ function n_active_heat_pumps(Qb_hp::AbstractVector{<:Real}, Tsrc::AbstractVector
         CAPk, COPk = Qb_hp[k] >= 0 ? heat_pump_performance(Tsrc[k], perf_heating...) :
                      heat_pump_performance(Tsrc[k], perf_cooling...)
         COP[k] = COPk
+        n[k] = CAPk > 0 ? clamp(abs(Qb_hp[k]) / CAPk, 0.0, n_HP) : 0.0
+    end
+    return n, COP
+end
+function n_active_heat_pumps(Qb_hp::AbstractVector{<:Real}, Tsrc::AbstractVector{<:Real},
+    Tload::AbstractVector{<:Real}, n_HP::Real, perf_heating::Tuple, perf_cooling::Tuple)
+
+    # Check
+    length(Qb_hp) == length(Tsrc) == length(Tload) ||
+        throw(DimensionMismatch("Qb_hp, Tsrc and Tload must have the same length."))
+
+    # Preallocation
+    n = similar(Qb_hp, Float64)
+    COP = similar(Qb_hp, Float64)
+
+    # Conversion between building load and number of active heat pumps
+    for k in eachindex(Qb_hp, Tsrc, Tload)
+        CAPk, COPk = Qb_hp[k] >= 0 ? heat_pump_performance(Tsrc[k], Tload[k], perf_heating...) :
+                     heat_pump_performance(Tsrc[k], Tload[k], perf_cooling...)
+        COP[k] = COPk
+        n[k] = CAPk > 0 ? clamp(abs(Qb_hp[k]) / CAPk, 0.0, n_HP) : 0.0
+    end
+    return n, COP
+end
+function n_active_heat_pumps(Qb_hp::AbstractVector{<:Real}, n_HP::Real, CAP_heating::Real,
+    CAP_cooling::Real, COP_heating::Real, COP_cooling::Real)
+
+    # Preallocation
+    n = similar(Qb_hp, Float64)
+    COP = similar(Qb_hp, Float64)
+
+    # Conversion between building load and number of active heat pumps
+    for k in eachindex(Qb_hp)
+        CAPk, COP[k] = Qb_hp[k] >= 0 ? (CAP_heating, COP_heating) : (CAP_cooling, COP_cooling)
         n[k] = CAPk > 0 ? clamp(abs(Qb_hp[k]) / CAPk, 0.0, n_HP) : 0.0
     end
     return n, COP

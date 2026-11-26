@@ -5,8 +5,8 @@
 #     limits, source-side mitigation to respect them, and the effective borehole resistance
 #     recalculated at the mean fluid temperature (`fluid` keyword)
 # The limits are checked at the ground inlet T_in (`Tlim_at = :inlet` by default, the heat-pump LFT;
-# seen from the ground). The outlet model can also be the outlet transfer function of each flow
-# rate (`outlet_model = :transfer_function`, needs the grout heat capacity `Cg`).
+# seen from the ground). The outlet model can also be the outlet g-function of each flow
+# rate (`outlet_model = :gfunction`, needs the grout heat capacity `Cg`).
 
 using Pkg; Pkg.activate(@__DIR__)
 # Pkg.instantiate() # Once per machine, to install dependencies in the local environment

@@ -18,9 +18,9 @@
 # responses `h_out` for a non-stationary flow rate), the other takes the field's raw
 # geometry/soil/pipe inputs, computes the ground response once, and delegates to the first.
 
-using GroundHeatExchanger: resistance_ULoop_effective, ground_response, FLSModel,
+using GroundHeatExchanger: resistance_ULoop_effective, gfunction, FLSModel,
     fluid_temperature, inlet_temperature, outlet_temperature, convolution_ns,
-    outlet_transfer_function, DeepANN, fluid_property
+    outlet_gfunction, DeepANN, fluid_property
 
 """
     _source_fluid_temperature(t, Qg, nb, H, g, Rbe, C, V, T0; ΔR=nothing)
@@ -92,8 +92,8 @@ methods. Two outlet models are available:
 - `:resistance` (default): the mean fluid temperature from the g-function `g` and the effective
     borehole resistance `Rbe(V)`, minus half the loop temperature difference:
     `h_out = (Rbe(V) + g) / (nb·H) - 1 / (2·nb·V·C)`;
-- `:transfer_function`: the borehole outlet transfer function of each flow rate
-    (`outlet_transfer_function` of `GroundHeatExchanger.jl`, short-term `DeepANN`):
+- `:gfunction`: the borehole outlet g-function of each flow rate
+    (`outlet_gfunction` of `GroundHeatExchanger.jl`, short-term `DeepANN`):
     `h_out = ḡ(V) / (nb·V·C)`. Its short-term part captures the flow-dependent fluid transit and
     borehole thermal capacity that a constant `Rbe(V)` cannot (Beaudry et al. 2024). It needs the
     grout and pipe volumetric heat capacities `Cg` and `Cp`, and the DeepANN validity ranges apply
@@ -109,7 +109,7 @@ function _outlet_responses(t::AbstractVector{<:Real}, xy::AbstractMatrix{<:Real}
     nb = size(xy, 1)
     C = cf * ρf
     m = FLSModel(H, D, ks, Cs)
-    g = ground_response(t, rb, xy, m)
+    g = gfunction(t, rb, xy, m)
     Rbe = [resistance_ULoop_effective(V, H, s, rb, ro, ri, ks, kg, kp, kf, cf, ρf, μf)
            for V in V_candidates]
 
@@ -117,15 +117,15 @@ function _outlet_responses(t::AbstractVector{<:Real}, xy::AbstractMatrix{<:Real}
     if outlet_model === :resistance
         h_out = hcat([(Rbe[i] .+ g) ./ (nb * H) .- 1 / (2 * nb * V_candidates[i] * C)
                       for i in eachindex(V_candidates)]...)
-    elseif outlet_model === :transfer_function
+    elseif outlet_model === :gfunction
         Cg === nothing &&
-            throw(ArgumentError("outlet_model = :transfer_function needs the grout heat " *
+            throw(ArgumentError("outlet_model = :gfunction needs the grout heat " *
                 "capacity Cg."))
-        h_out = hcat([outlet_transfer_function(t, ks, Cs, kg, Cg, kp, Cp, C, ri, ro, rb, H,
+        h_out = hcat([outlet_gfunction(t, ks, Cs, kg, Cg, kp, Cp, C, ri, ro, rb, H,
                           V_candidates[i], s, Rbe[i], m; xy=xy, interp=true, model=DeepANN()) ./
                       (nb * V_candidates[i] * C) for i in eachindex(V_candidates)]...)
     else
-        throw(ArgumentError("outlet_model must be :resistance or :transfer_function, got " *
+        throw(ArgumentError("outlet_model must be :resistance or :gfunction, got " *
             ":$outlet_model"))
     end
     return h_out, Rbe, g
@@ -343,7 +343,7 @@ See the README's "Conventions" section for the sign convention and `T_in`/`T_out
 
 The first method takes an already-computed g-function `g` and effective borehole resistance `Rbe`.
 The second method takes the field's raw geometry/soil/pipe inputs, computes `g` and `Rbe` once via
-[`ground_response`](@ref)/[`resistance_ULoop_effective`](@ref), and calls the first method. It also
+[`gfunction`](@ref)/[`resistance_ULoop_effective`](@ref), and calls the first method. It also
 gives the pumping power and, with `fluid`, recalculates `Rbe` at the mean fluid temperature
 ([`_fluid_temperature_loop`](@ref)), which makes it a small fixed-point loop.
 # Arguments
@@ -353,7 +353,7 @@ gives the pumping power and, with `fluid`, recalculates `Rbe` at the mean fluid 
     - `CAP_heating`, `CAP_cooling`: Fixed heating/cooling capacity of one heat pump unit [W]
     - `n_HP`: Number of installed heat pumps [-]
     - `nb`: Number of boreholes [-] (first method only; `size(xy, 1)` in the second)
-    - `g`: Pre-computed g-function [°C.m/W], e.g. from [`ground_response`](@ref) (first method only)
+    - `g`: Pre-computed g-function [°C.m/W], e.g. from [`gfunction`](@ref) (first method only)
     - `Rbe`: Pre-computed effective borehole thermal resistance [m.K/W], e.g. from
         [`resistance_ULoop_effective`](@ref) (first method only)
     - `xy`: Borehole coordinates (nb x 2) [m] (second method only)
@@ -439,7 +439,7 @@ function gshp_simulation(t::AbstractVector{<:Real}, Qb::AbstractVector{<:Real},
     V::Real, T0::Real; fluid=nothing, η_pump::Real=0.5, kwargs...)
     nb = size(xy, 1)
     Rbe = resistance_ULoop_effective(V, H, s, rb, ro, ri, ks, kg, kp, kf, cf, ρf, μf)
-    g = ground_response(t, rb, xy, FLSModel(H, D, ks, Cs))
+    g = gfunction(t, rb, xy, FLSModel(H, D, ks, Cs))
     simulate(ΔR) = gshp_simulation(t, Qb, COP_heating, COP_cooling, CAP_heating, CAP_cooling,
         n_HP, nb, H, g, Rbe, cf, ρf, V, T0; ΔR, kwargs...)
     return _fluid_temperature_loop(simulate, V, nb, H, s, rb, ro, ri, ks, kg, kp, kf, cf, ρf, μf;
@@ -553,7 +553,7 @@ function gshp_simulation(t::AbstractVector{<:Real}, Qb::AbstractVector{<:Real},
     η_pump::Real=0.5, kwargs...)
     nb = size(xy, 1)
     Rbe = resistance_ULoop_effective(V, H, s, rb, ro, ri, ks, kg, kp, kf, cf, ρf, μf)
-    g = ground_response(t, rb, xy, FLSModel(H, D, ks, Cs))
+    g = gfunction(t, rb, xy, FLSModel(H, D, ks, Cs))
     simulate(ΔR) = gshp_simulation(t, Qb, perf_heating, perf_cooling, n_HP, nb, H, g, Rbe, cf, ρf,
         V, T0; ΔR, kwargs...)
     return _fluid_temperature_loop(simulate, V, nb, H, s, rb, ro, ri, ks, kg, kp, kf, cf, ρf, μf;
@@ -599,10 +599,10 @@ computes them once with the chosen `outlet_model`, and calls the first.
 # Keywords
     - `T_margin`: Temperature margin to the limits below which the largest flow rate is forced
         (case 5, default 1 °C)
-    - `outlet_model`: `:resistance` (default) or `:transfer_function` (second method only, see
+    - `outlet_model`: `:resistance` (default) or `:gfunction` (second method only, see
         [`_outlet_responses`](@ref))
     - `Cg`, `Cp`: Grout and pipe volumetric heat capacities [J/m3K], for
-        `outlet_model = :transfer_function` only (second method only)
+        `outlet_model = :gfunction` only (second method only)
     - `ΔR`: as in case 1, one column per flow rate of `V_candidates` (first method only)
     - `Cd`, `Tlim`, `Tlim_at`, `η_pump`: as in case 1
     - `fluid`: as in case 1, with `outlet_model = :resistance` only

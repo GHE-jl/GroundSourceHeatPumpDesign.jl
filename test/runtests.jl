@@ -507,15 +507,15 @@ using GroundSourceHeatPumpDesign
             @test all(Tlim[1] - 1e-6 .<= res5f.T_in .<= Tlim[2] + 1e-6)
         end
 
-        @testset "outlet transfer function per flow rate" begin
+        @testset "outlet g-function per flow rate" begin
             @test_throws ArgumentError gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy,
                 rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0;
-                outlet_model = :transfer_function)
+                outlet_model = :gfunction)
             res_r = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
                 ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0)
             res_t = gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy, rb, H, D, ks, Cs, s,
                 ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0;
-                outlet_model = :transfer_function, Cg = 2.2e6)
+                outlet_model = :gfunction, Cg = 2.2e6)
             @test size(res_t.h_out) == size(res_r.h_out)
             @test all(isfinite, res_t.T_out)
             # Short-term fluid transit: the outlet reacts more slowly than with Rbe(V) only
@@ -523,7 +523,7 @@ using GroundSourceHeatPumpDesign
             # The Rb* recalculation needs the resistance outlet model
             @test_throws ArgumentError gshp_simulation(t, Qb, 4.0, 5.0, 10_000.0, 12_000.0, 1, xy,
                 rb, H, D, ks, Cs, s, ro, ri, kg, kp, kf, cf, ρf, μf, V_candidates, 4.0, T0;
-                outlet_model = :transfer_function, Cg = 2.2e6, fluid = (:water, 100))
+                outlet_model = :gfunction, Cg = 2.2e6, fluid = (:water, 100))
         end
 
         @testset "Rb* recalculated at the fluid temperature (fluid keyword)" begin

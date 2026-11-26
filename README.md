@@ -120,7 +120,7 @@ Options common to every case:
   count cycles on and off, which lowers its COP: `PLF = 1 - Cd (1 - PLR)`, see `part_load_COP`.
   With `Cd > 0`, the degraded COP is used in the building-to-ground conversion.
 - `outlet_model` (non-stationary flow) — `:resistance` (default, outlet response from the effective
-  borehole resistance of each flow rate) or `:transfer_function` (outlet transfer function of each
+  borehole resistance of each flow rate) or `:gfunction` (outlet g-function of each
   flow rate, Beaudry et al. 2024; needs the grout heat capacity `Cg`).
 - `fluid` (raw-input methods) — e.g. `(:MPG, 20)`. The fluid properties and the effective borehole
   resistance `Rb*` are recalculated at the mean fluid temperature of the previous pass, and the
@@ -172,7 +172,7 @@ Pkg.add(url = "https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl")
 
 | Package | Used for |
 |---|---|
-| [GroundHeatExchanger.jl](https://github.com/GHE-jl/GroundHeatExchanger.jl) | Ground-side physics used by `gshp_simulation`: g-function (`ground_response`), effective borehole resistance, and stationary fluid/inlet/outlet temperature |
+| [GroundHeatExchanger.jl](https://github.com/GHE-jl/GroundHeatExchanger.jl) | Ground-side physics used by `gshp_simulation`: g-function (`gfunction`), effective borehole resistance, and stationary fluid/inlet/outlet temperature |
 
 ### Scripts only
 
@@ -190,7 +190,7 @@ Pkg.add(url = "https://github.com/GHE-jl/GroundSourceHeatPumpDesign.jl")
   non-stationary convolutions for the fast simulation of time-variant flowrates in ground heat
   exchangers. *Science and Technology for the Built Environment*, 30(3), 208–219.
   <https://doi.org/10.1080/23744731.2023.2279468>
-  Non-stationary (state-vector) convolution and outlet transfer function used by the non-stationary
+  Non-stationary (state-vector) convolution and outlet g-function used by the non-stationary
   flow cases (3, 3b and 5).
 - Bernier, M. A., Pinel, P., Labib, R., & Paillot, R. (2004). A Multiple Load Aggregation Algorithm
   for Annual Hourly Simulations of GCHP Systems. *HVAC&R Research*, 10(4), 471–487.

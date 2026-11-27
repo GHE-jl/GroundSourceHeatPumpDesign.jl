@@ -7,7 +7,7 @@ authors = ["Gabriel-Dion <dion.gabriel100@gmail.com>"]
 GroundHeatExchanger = "bd8f68b8-2a15-4d14-8bb6-4cefce65f0ac"
 
 [compat]
-GroundHeatExchanger = "2"
+GroundHeatExchanger = "2, 1"
 julia = "1.11"
 
 [extras]
